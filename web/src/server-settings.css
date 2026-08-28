@@ -1,0 +1,163 @@
+:root {
+  font-family: Inter, "Segoe UI", sans-serif;
+  color: #edf5ff;
+  background: #091224;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  min-width: 620px;
+  min-height: 620px;
+  background: radial-gradient(circle at top left, #173665, #091224 55%);
+}
+button,
+input,
+textarea {
+  font: inherit;
+}
+button {
+  padding: 10px 15px;
+  border: 1px solid #405879;
+  border-radius: 9px;
+  color: #dceaff;
+  background: #14243d;
+  cursor: pointer;
+}
+button:hover {
+  border-color: #5d83b6;
+}
+button.primary {
+  border-color: #3478e5;
+  background: #286bd5;
+}
+button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+.settings-shell {
+  width: min(760px, calc(100vw - 40px));
+  margin: 0 auto;
+  padding: 28px 0 40px;
+}
+header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 22px;
+}
+header img {
+  width: 50px;
+  height: 50px;
+  border-radius: 10px;
+  object-fit: cover;
+}
+h1,
+h2,
+p {
+  margin: 0;
+}
+header p {
+  margin-top: 4px;
+  color: #90a8ca;
+}
+.settings-actions {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.server-form {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 15px;
+  padding: 17px;
+  border: 1px solid #344c70;
+  border-radius: 12px;
+  background: #0f1d33;
+}
+.server-form[hidden] {
+  display: none;
+}
+.server-form label {
+  display: grid;
+  gap: 6px;
+  color: #b9cbe4;
+  font-size: 0.85rem;
+}
+.server-form input,
+.server-form textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #3b5274;
+  border-radius: 8px;
+  color: white;
+  background: #0b172a;
+  resize: vertical;
+}
+.server-form > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 9px;
+}
+#deploy-progress {
+  max-height: 150px;
+  margin: 0;
+  padding: 10px;
+  overflow: auto;
+  border-radius: 8px;
+  color: #b9d4fb;
+  background: #07101e;
+  white-space: pre-wrap;
+}
+.settings-error {
+  min-height: 20px;
+  margin: 8px 0;
+  color: #ff8f8f;
+}
+.server-list {
+  display: grid;
+  gap: 9px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.server-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 15px;
+  padding: 14px;
+  border: 1px solid #2e4567;
+  border-radius: 11px;
+  background: #101d31dd;
+}
+.server-list li > div:first-child {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.server-list strong,
+.server-list small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.server-list small {
+  color: #8299bb;
+}
+.badges {
+  width: max-content;
+  padding: 2px 7px;
+  border-radius: 999px;
+  color: #8dd9ae;
+  background: #123c2b;
+  font-size: 0.69rem;
+}
+.server-actions {
+  display: flex;
+  gap: 6px;
+}
+.server-actions .remove {
+  color: #ffb3b3;
+}

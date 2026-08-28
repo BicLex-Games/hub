@@ -22,7 +22,7 @@ docker compose --project-directory . --env-file .env -f deploy/docker-compose.se
 curl http://localhost:8123/health
 ```
 
-Открыть на Ubuntu/firewall: TCP `8123`, TCP/UDP `3478`, UDP `40000-40300`. Файлы ограничены 100 МБ, чат хранит до 500 последних сообщений.
+Открыть на Ubuntu/firewall: TCP `8123`, TCP/UDP `3478`, UDP `40000-40300`. Диапазон mediasoup можно переназначить через `RTC_MIN_PORT` и `RTC_MAX_PORT`. Файлы ограничены 100 МБ, чат хранит до 500 последних сообщений.
 
 ## Запуск клиента
 

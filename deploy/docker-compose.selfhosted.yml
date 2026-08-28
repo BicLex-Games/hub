@@ -8,7 +8,7 @@ services:
       - .env
     ports:
       - "8123:8123/tcp"
-      - "40000-40100:40000-40100/udp"
+      - "${RTC_MIN_PORT:-40000}-${RTC_MAX_PORT:-40100}:${RTC_MIN_PORT:-40000}-${RTC_MAX_PORT:-40100}/udp"
     volumes:
       - ./data:/data
     healthcheck:

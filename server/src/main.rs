@@ -738,6 +738,17 @@ async fn create_transport(
         .ok_or_else(|| anyhow::anyhow!("join required"))?
         .clone();
     info!(peer_id = %id, direction = if send { "send" } else { "recv" }, "CREATE TRANSPORT requested");
+    let rtc_min_port = std::env::var("RTC_MIN_PORT")
+        .unwrap_or_else(|_| "40000".into())
+        .parse::<u16>()
+        .map_err(|_| anyhow::anyhow!("RTC_MIN_PORT must be a valid UDP port"))?;
+    let rtc_max_port = std::env::var("RTC_MAX_PORT")
+        .unwrap_or_else(|_| "40100".into())
+        .parse::<u16>()
+        .map_err(|_| anyhow::anyhow!("RTC_MAX_PORT must be a valid UDP port"))?;
+    if rtc_min_port > rtc_max_port {
+        anyhow::bail!("RTC_MIN_PORT must not exceed RTC_MAX_PORT");
+    }
     let listen = ListenInfo {
         protocol: Protocol::Udp,
         ip: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
@@ -746,7 +757,7 @@ async fn create_transport(
             .filter(|v| !v.is_empty()),
         expose_internal_ip: false,
         port: None,
-        port_range: Some(40000..=40100),
+        port_range: Some(rtc_min_port..=rtc_max_port),
         flags: None,
         send_buffer_size: None,
         recv_buffer_size: None,

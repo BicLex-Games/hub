@@ -178,7 +178,7 @@ fn prepare_bundle(
         uuid::Uuid::new_v4().simple()
     );
     let turn_password = uuid::Uuid::new_v4().simple().to_string();
-    fs::write(bundle.join(".env"), format!("BIND_ADDR=0.0.0.0:8123\nANNOUNCED_ADDRESS={host}\nROOM_NAME=main\nROOM_TOKEN={room_token}\nDATA_DIR=/data\nMAX_PEERS=20\nRUST_LOG=info\nTURN_HOST={host}\nTURN_USERNAME=biclex\nTURN_PASSWORD={turn_password}\n")).map_err(|error| error.to_string())?;
+    fs::write(bundle.join(".env"), format!("BIND_ADDR=0.0.0.0:8123\nANNOUNCED_ADDRESS={host}\nROOM_NAME=main\nROOM_TOKEN={room_token}\nDATA_DIR=/data\nMAX_PEERS=20\nRTC_MIN_PORT=40000\nRTC_MAX_PORT=40100\nRUST_LOG=info\nTURN_HOST={host}\nTURN_USERNAME=biclex\nTURN_PASSWORD={turn_password}\n")).map_err(|error| error.to_string())?;
     let password_file = root.join("ssh-password.txt");
     fs::write(&password_file, password).map_err(|error| error.to_string())?;
     Ok((

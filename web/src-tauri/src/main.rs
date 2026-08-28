@@ -2,17 +2,19 @@
 
 use serde::Serialize;
 use std::{
+    collections::VecDeque,
     fs::{self, OpenOptions},
-    io::Write,
+    io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
+    sync::{Arc, Mutex},
+    thread,
 };
 use tauri::{Emitter, Manager};
 
-const SERVER_CARGO_TOML: &str = include_str!("../../../server/Cargo.toml");
-const SERVER_CARGO_LOCK: &str = include_str!("../../../server/Cargo.lock");
-const SERVER_MAIN_RS: &str = include_str!("../../../server/src/main.rs");
-const SERVER_DOCKERFILE: &str = include_str!("../../../server/Dockerfile");
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
 const SELFHOSTED_COMPOSE: &str = include_str!("../../../deploy/docker-compose.selfhosted.yml");
 
 #[derive(Clone, Serialize)]
@@ -88,6 +90,83 @@ fn progress(window: &tauri::WebviewWindow, stage: &str, message: &str) {
     );
 }
 
+fn hide_console(command: &mut Command) {
+    #[cfg(target_os = "windows")]
+    command.creation_flags(0x08000000);
+}
+
+fn hidden_output(command: &mut Command) -> std::io::Result<Output> {
+    hide_console(command);
+    command.output()
+}
+
+fn stream_reader<R: Read + Send + 'static>(
+    reader: R,
+    window: tauri::WebviewWindow,
+    tail: Arc<Mutex<VecDeque<String>>>,
+) -> thread::JoinHandle<()> {
+    thread::spawn(move || {
+        for line in BufReader::new(reader).lines().map_while(Result::ok) {
+            let line = line.trim().to_owned();
+            if line.is_empty() {
+                continue;
+            }
+            let visible = line.chars().take(700).collect::<String>();
+            progress(&window, "docker-log", &visible);
+            if let Ok(mut tail) = tail.lock() {
+                tail.push_back(visible);
+                while tail.len() > 120 {
+                    tail.pop_front();
+                }
+            }
+        }
+    })
+}
+
+fn run_streamed(
+    mut command: Command,
+    window: &tauri::WebviewWindow,
+    stdin_text: Option<String>,
+) -> Result<(), String> {
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    if stdin_text.is_some() {
+        command.stdin(Stdio::piped());
+    }
+    hide_console(&mut command);
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("Не удалось запустить удалённую установку: {error}"))?;
+    if let (Some(stdin), Some(text)) = (child.stdin.as_mut(), stdin_text) {
+        stdin
+            .write_all(text.as_bytes())
+            .map_err(|error| error.to_string())?;
+    }
+    let tail = Arc::new(Mutex::new(VecDeque::new()));
+    let stdout = child
+        .stdout
+        .take()
+        .map(|reader| stream_reader(reader, window.clone(), tail.clone()));
+    let stderr = child
+        .stderr
+        .take()
+        .map(|reader| stream_reader(reader, window.clone(), tail.clone()));
+    let status = child.wait().map_err(|error| error.to_string())?;
+    if let Some(reader) = stdout {
+        let _ = reader.join();
+    }
+    if let Some(reader) = stderr {
+        let _ = reader.join();
+    }
+    if status.success() {
+        return Ok(());
+    }
+    let details = tail
+        .lock()
+        .map(|lines| lines.iter().cloned().collect::<Vec<_>>().join("\n"))
+        .unwrap_or_default();
+    Err(format!("Deploy не выполнен: {}", details.trim()))
+}
+
 fn parse_ssh_address(address: &str) -> Result<(String, u16), String> {
     let value = address
         .trim()
@@ -139,7 +218,6 @@ fn fingerprint(text: &str) -> Option<String> {
 fn putty_args(port: u16, password_file: &Path, host_key: Option<&str>) -> Vec<String> {
     let mut args = vec![
         "-batch".into(),
-        "-no-antispoof".into(),
         "-P".into(),
         port.to_string(),
         "-pwfile".into(),
@@ -149,6 +227,25 @@ fn putty_args(port: u16, password_file: &Path, host_key: Option<&str>) -> Vec<St
         args.extend(["-hostkey".into(), host_key.into()]);
     }
     args
+}
+
+fn plink_args(port: u16, password_file: &Path, host_key: Option<&str>) -> Vec<String> {
+    let mut args = putty_args(port, password_file, host_key);
+    args.insert(1, "-no-antispoof".into());
+    args
+}
+
+fn openssh_args(port: u16, scp: bool) -> Vec<String> {
+    vec![
+        if scp { "-P" } else { "-p" }.into(),
+        port.to_string(),
+        "-o".into(),
+        "BatchMode=yes".into(),
+        "-o".into(),
+        "StrictHostKeyChecking=accept-new".into(),
+        "-o".into(),
+        "ConnectTimeout=15".into(),
+    ]
 }
 
 fn prepare_bundle(
@@ -161,15 +258,7 @@ fn prepare_bundle(
     ));
     let bundle_name = format!("biclex-hub-{}", uuid::Uuid::new_v4().simple());
     let bundle = root.join(&bundle_name);
-    fs::create_dir_all(bundle.join("server/src")).map_err(|error| error.to_string())?;
-    fs::write(bundle.join("server/Cargo.toml"), SERVER_CARGO_TOML)
-        .map_err(|error| error.to_string())?;
-    fs::write(bundle.join("server/Cargo.lock"), SERVER_CARGO_LOCK)
-        .map_err(|error| error.to_string())?;
-    fs::write(bundle.join("server/src/main.rs"), SERVER_MAIN_RS)
-        .map_err(|error| error.to_string())?;
-    fs::write(bundle.join("server/Dockerfile"), SERVER_DOCKERFILE)
-        .map_err(|error| error.to_string())?;
+    fs::create_dir_all(&bundle).map_err(|error| error.to_string())?;
     fs::write(bundle.join("docker-compose.yml"), SELFHOSTED_COMPOSE)
         .map_err(|error| error.to_string())?;
     let room_token = format!(
@@ -205,6 +294,7 @@ fn deploy_blocking(
     address: String,
     username: String,
     password: String,
+    use_password: bool,
 ) -> Result<DeployResult, String> {
     if username.is_empty()
         || !username
@@ -213,7 +303,7 @@ fn deploy_blocking(
     {
         return Err("Некорректный SSH-логин".into());
     }
-    if password.is_empty() {
+    if use_password && password.is_empty() {
         return Err("Введите пароль SSH".into());
     }
     let (host, port) = parse_ssh_address(&address)?;
@@ -222,23 +312,41 @@ fn deploy_blocking(
     let (temporary, password_file, bundle_name, room_token) = prepare_bundle(&host, &password)?;
     let target = format!("{username}@{host}");
 
-    progress(&window, "ssh", "Проверка SSH host key");
-    let mut probe_args = putty_args(port, &password_file, None);
-    probe_args.extend([target.clone(), "exit".into()]);
-    let probe = Command::new(&plink)
-        .args(&probe_args)
-        .output()
-        .map_err(|error| format!("Не удалось запустить plink: {error}"))?;
-    let probe_text = output_text(&probe);
-    let host_key = if probe.status.success() {
-        None
+    progress(
+        &window,
+        "ssh",
+        if use_password {
+            "Проверка SSH host key и пароля"
+        } else {
+            "Проверка SSH-ключа"
+        },
+    );
+    let (probe, host_key) = if use_password {
+        let mut probe_args = plink_args(port, &password_file, None);
+        probe_args.extend([target.clone(), "exit".into()]);
+        let mut command = Command::new(&plink);
+        command.args(&probe_args);
+        let probe = hidden_output(&mut command)
+            .map_err(|error| format!("Не удалось запустить plink: {error}"))?;
+        let key = if probe.status.success() {
+            None
+        } else {
+            fingerprint(&output_text(&probe))
+        };
+        (probe, key)
     } else {
-        fingerprint(&probe_text)
+        let mut args = openssh_args(port, false);
+        args.extend([target.clone(), "exit".into()]);
+        let mut command = Command::new("ssh.exe");
+        command.args(&args);
+        let probe = hidden_output(&mut command)
+            .map_err(|error| format!("Не найден системный OpenSSH client: {error}"))?;
+        (probe, None)
     };
-    if !probe.status.success() && host_key.is_none() {
+    if !probe.status.success() && !(use_password && host_key.is_some()) {
         return Err(format!(
             "SSH-подключение не выполнено: {}",
-            probe_text.trim()
+            output_text(&probe).trim()
         ));
     }
     if let Some(key) = &host_key {
@@ -246,20 +354,25 @@ fn deploy_blocking(
     }
 
     progress(&window, "upload", "Загрузка BicLex Hub на сервер");
-    let mut copy_args = putty_args(port, &password_file, host_key.as_deref());
-    copy_args.push("-r".into());
-    copy_args.push(
-        temporary
-            .root
-            .join(&bundle_name)
-            .to_string_lossy()
-            .into_owned(),
-    );
-    copy_args.push(format!("{target}:/tmp/"));
-    let copy = Command::new(&pscp)
-        .args(&copy_args)
-        .output()
-        .map_err(|error| format!("Не удалось запустить pscp: {error}"))?;
+    let source = temporary
+        .root
+        .join(&bundle_name)
+        .to_string_lossy()
+        .into_owned();
+    let copy = if use_password {
+        let mut copy_args = putty_args(port, &password_file, host_key.as_deref());
+        copy_args.extend(["-r".into(), source, format!("{target}:/tmp/")]);
+        let mut command = Command::new(&pscp);
+        command.args(&copy_args);
+        hidden_output(&mut command)
+            .map_err(|error| format!("Не удалось запустить pscp: {error}"))?
+    } else {
+        let mut copy_args = openssh_args(port, true);
+        copy_args.extend(["-r".into(), source, format!("{target}:/tmp/")]);
+        let mut command = Command::new("scp.exe");
+        command.args(&copy_args);
+        hidden_output(&mut command).map_err(|error| format!("Не найден системный scp: {error}"))?
+    };
     if !copy.status.success() {
         return Err(format!(
             "Загрузка не выполнена: {}",
@@ -272,13 +385,21 @@ fn deploy_blocking(
     let script = format!(
         r#"set -e
 export DEBIAN_FRONTEND=noninteractive
+export BUILDKIT_PROGRESS=plain
+export CARGO_TERM_COLOR=never
+echo "Проверка Docker на сервере"
 if ! command -v curl >/dev/null 2>&1; then apt-get update && apt-get install -y curl ca-certificates; fi
 if ! command -v docker >/dev/null 2>&1; then curl -fsSL https://get.docker.com | sh; fi
+echo "Копирование конфигурации BicLex Hub"
 install -d -m 755 /opt/biclex-hub
 cp -a '{remote}/.' /opt/biclex-hub/
 cd /opt/biclex-hub
 mkdir -p data
-docker compose up -d --build
+echo "Загрузка готовых образов BicLex Hub"
+docker compose pull
+echo "Запуск контейнеров"
+docker compose up -d --remove-orphans
+echo "Настройка сетевых портов"
 if command -v ufw >/dev/null 2>&1; then
   ufw allow 8123/tcp || true
   ufw allow 3478/tcp || true
@@ -286,6 +407,7 @@ if command -v ufw >/dev/null 2>&1; then
   ufw allow 40000:40300/udp || true
 fi
 for attempt in $(seq 1 30); do
+  echo "Проверка health: попытка $attempt/30"
   if curl -fsS http://127.0.0.1:8123/health >/dev/null; then exit 0; fi
   sleep 2
 done
@@ -294,36 +416,26 @@ exit 1"#
     );
     let remote_command = if username == "root" {
         format!("bash -lc {}", shell_quote(&script))
-    } else {
+    } else if use_password {
         format!("sudo -S -p '' bash -lc {}", shell_quote(&script))
+    } else {
+        format!("sudo -n bash -lc {}", shell_quote(&script))
     };
-    let mut deploy_args = putty_args(port, &password_file, host_key.as_deref());
-    deploy_args.extend([target, remote_command]);
-    let mut command = Command::new(&plink);
-    command
-        .args(&deploy_args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    if username != "root" {
-        command.stdin(Stdio::piped());
-    }
-    let mut child = command
-        .spawn()
-        .map_err(|error| format!("Не удалось запустить deploy: {error}"))?;
-    if let Some(stdin) = child.stdin.as_mut() {
-        stdin
-            .write_all(format!("{password}\n").as_bytes())
-            .map_err(|error| error.to_string())?;
-    }
-    let deployed = child
-        .wait_with_output()
-        .map_err(|error| error.to_string())?;
-    if !deployed.status.success() {
-        return Err(format!(
-            "Deploy не выполнен: {}",
-            output_text(&deployed).trim()
-        ));
-    }
+    let command = if use_password {
+        let mut args = plink_args(port, &password_file, host_key.as_deref());
+        args.extend([target, remote_command]);
+        let mut command = Command::new(&plink);
+        command.args(&args);
+        command
+    } else {
+        let mut args = openssh_args(port, false);
+        args.extend([target, remote_command]);
+        let mut command = Command::new("ssh.exe");
+        command.args(&args);
+        command
+    };
+    let stdin_text = (use_password && username != "root").then(|| format!("{password}\n"));
+    run_streamed(command, &window, stdin_text)?;
     progress(&window, "health", "Сервер отвечает: OK");
     drop(temporary);
     Ok(DeployResult {
@@ -343,13 +455,21 @@ async fn deploy_server(
     address: String,
     username: String,
     password: String,
+    use_password: bool,
 ) -> Result<DeployResult, String> {
     let resource_dir = app
         .path()
         .resource_dir()
         .map_err(|error| error.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
-        deploy_blocking(window, resource_dir, address, username, password)
+        deploy_blocking(
+            window,
+            resource_dir,
+            address,
+            username,
+            password,
+            use_password,
+        )
     })
     .await
     .map_err(|error| format!("Deploy task failed: {error}"))?

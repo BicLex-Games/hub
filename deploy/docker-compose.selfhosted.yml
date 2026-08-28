@@ -1,7 +1,7 @@
 services:
   server:
-    build:
-      context: ./server
+    image: hub.biclex.ru/biclex-hub-server:0.3.0
+    pull_policy: always
     container_name: biclex-hub-server
     restart: unless-stopped
     env_file:

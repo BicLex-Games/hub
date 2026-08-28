@@ -1,23 +1,54 @@
-:root {
-  font-family: Inter, "Segoe UI", sans-serif;
-  color: #edf5ff;
-  background: #091224;
-}
-* {
-  box-sizing: border-box;
-}
-body {
-  margin: 0;
-  min-width: 620px;
-  min-height: 620px;
+.server-settings-page {
+  overflow-y: auto;
   background: radial-gradient(circle at top left, #173665, #091224 55%);
 }
-button,
-input,
-textarea {
+.settings-shell {
+  width: min(760px, calc(100vw - 36px));
+  margin: 0 auto;
+  padding: 22px 0 36px;
+}
+.settings-header {
+  display: grid;
+  grid-template-columns: auto 50px minmax(0, 1fr);
+  align-items: center;
+  gap: 13px;
+  margin-bottom: 20px;
+}
+.settings-header img {
+  width: 50px;
+  height: 50px;
+  border-radius: 10px;
+  object-fit: cover;
+}
+.settings-header h1,
+.settings-header p,
+.server-form h2,
+.server-form p {
+  margin: 0;
+}
+.settings-header h1 {
+  font-size: 1.35rem;
+}
+.settings-header p,
+.form-description {
+  margin-top: 4px;
+  color: #90a8ca;
+  font-size: 0.84rem;
+}
+.settings-back {
+  padding: 9px 12px;
+}
+.settings-actions {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.server-settings-page button,
+.server-settings-page input,
+.server-settings-page textarea {
   font: inherit;
 }
-button {
+.server-settings-page button {
   padding: 10px 15px;
   border: 1px solid #405879;
   border-radius: 9px;
@@ -25,65 +56,50 @@ button {
   background: #14243d;
   cursor: pointer;
 }
-button:hover {
+.server-settings-page button:hover {
   border-color: #5d83b6;
 }
-button.primary {
+.server-settings-page button.primary {
   border-color: #3478e5;
   background: #286bd5;
 }
-button:disabled {
+.server-settings-page button.success {
+  border-color: #2ea765;
+  color: #f0fff6;
+  background: #16844a;
+}
+.server-settings-page button:disabled {
   opacity: 0.55;
   cursor: wait;
-}
-.settings-shell {
-  width: min(760px, calc(100vw - 40px));
-  margin: 0 auto;
-  padding: 28px 0 40px;
-}
-header {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  margin-bottom: 22px;
-}
-header img {
-  width: 50px;
-  height: 50px;
-  border-radius: 10px;
-  object-fit: cover;
-}
-h1,
-h2,
-p {
-  margin: 0;
-}
-header p {
-  margin-top: 4px;
-  color: #90a8ca;
-}
-.settings-actions {
-  display: flex;
-  gap: 10px;
-  margin-bottom: 14px;
 }
 .server-form {
   display: grid;
   gap: 12px;
-  margin-bottom: 15px;
-  padding: 17px;
+  padding: 18px;
   border: 1px solid #344c70;
   border-radius: 12px;
   background: #0f1d33;
-}
-.server-form[hidden] {
-  display: none;
 }
 .server-form label {
   display: grid;
   gap: 6px;
   color: #b9cbe4;
   font-size: 0.85rem;
+}
+.server-form .auth-toggle {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: max-content;
+  cursor: pointer;
+}
+.server-form .auth-toggle input {
+  width: auto;
+}
+.ssh-key-hint,
+.deploy-elapsed {
+  color: #90a8ca;
+  font-size: 0.78rem;
 }
 .server-form input,
 .server-form textarea {
@@ -95,13 +111,13 @@ header p {
   background: #0b172a;
   resize: vertical;
 }
-.server-form > div {
+.form-actions {
   display: flex;
   justify-content: flex-end;
   gap: 9px;
 }
 #deploy-progress {
-  max-height: 150px;
+  max-height: 210px;
   margin: 0;
   padding: 10px;
   overflow: auto;
@@ -160,4 +176,25 @@ header p {
 }
 .server-actions .remove {
   color: #ffb3b3;
+}
+.server-list .empty-servers {
+  display: block;
+  padding: 28px 18px;
+  color: #90a8ca;
+  text-align: center;
+}
+@media (max-width: 680px) {
+  .settings-header {
+    grid-template-columns: auto 42px minmax(0, 1fr);
+  }
+  .settings-header img {
+    width: 42px;
+    height: 42px;
+  }
+  .server-list li {
+    grid-template-columns: 1fr;
+  }
+  .server-actions {
+    flex-wrap: wrap;
+  }
 }

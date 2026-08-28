@@ -18,8 +18,11 @@ import {
   websocketUrl,
   type HubServer,
 } from "./servers";
+import { mountServerSettings } from "./server-settings";
 import "./style.css";
 import "./update.css";
+
+const CLIENT_VERSION = "0.3.0";
 
 type Request = { requestId: string; type: string; [key: string]: unknown };
 type ServerMessage = {
@@ -124,9 +127,12 @@ const participantVolumes: Record<string, number> = (() => {
     return {};
   }
 })();
-app.innerHTML = `<main class="app-shell"><section id="setup-page" class="page setup-page"><div class="brand"><img src="${teamLogoUrl}" alt="BicLex" /><div><h1>BicLex Hub</h1><p>Голосовая связь команды</p></div></div><div class="setup-form"><label>Имя<input id="name" maxlength="32" autocomplete="name" placeholder="Ваше имя" /></label><label>Микрофон<select id="input-device"><option value="">Микрофон по умолчанию</option></select></label><div class="meter-block"><div class="meter-title"><span>Уровень микрофона</span><span id="meter-value">0%</span></div><div class="meter"><i id="meter-bar"></i></div></div><button id="monitor" class="secondary">🎧 Проверить микрофон</button><p class="hint">Для проверки лучше использовать наушники</p><p id="setup-error" class="setup-error" role="alert"></p><button id="client-version" class="client-version" style="position:fixed;right:12px;bottom:8px;padding:0;border:0;color:#6f819d;background:transparent;font-size:.68rem">Версия клиента: 0.2.0</button><div class="join-actions"><button id="update" class="update" hidden>Обновить</button><button id="join" class="join">Войти</button></div></div></section><section id="room-page" class="page room-page" hidden><header class="room-header"><div class="room-brand"><img src="${teamLogoUrl}" alt="" /><strong>BicLex Hub</strong></div><span id="connection-state" class="connection-state">● Online</span></header><div class="room-main"><div><h2>Участники</h2><p id="current-mic" class="current-mic">Микрофон</p></div><div id="screens" class="screens" hidden></div><ul id="users" class="participants"></ul></div><div class="room-bottom"><div class="media-settings"><div class="suppression"><span>Шумоподавление</span><div class="noise" style="grid-template-columns:repeat(2,1fr)"><button data-noise="off">Off</button><button data-noise="ai">✨ AI</button></div></div><label class="screen-quality">Качество экрана<select id="screen-quality"><option value="medium">Среднее · Full HD 30</option><option value="high">Высокое · 1440p 30</option><option value="maximum">Максимум · до 4K 60</option></select></label></div><div class="controls"><button id="mute" class="control mute" disabled><b>🎤</b><span>Mute</span></button><button id="screen-share" class="control screen-share"><b>🖥</b><span>Демонстрация экрана</span></button><button id="leave" class="control leave" disabled><b>🚪</b><span>Выйти</span></button></div></div></section></main>`;
+app.innerHTML = `<main class="app-shell"><section id="setup-page" class="page setup-page"><div class="brand"><img src="${teamLogoUrl}" alt="BicLex" /><div><h1>BicLex Hub</h1><p>Голосовая связь команды</p></div></div><div class="setup-form"><label>Имя<input id="name" maxlength="32" autocomplete="name" placeholder="Ваше имя" /></label><label>Микрофон<select id="input-device"><option value="">Микрофон по умолчанию</option></select></label><div class="meter-block"><div class="meter-title"><span>Уровень микрофона</span><span id="meter-value">0%</span></div><div class="meter"><i id="meter-bar"></i></div></div><button id="monitor" class="secondary">🎧 Проверить микрофон</button><p class="hint">Для проверки лучше использовать наушники</p><p id="setup-error" class="setup-error" role="alert"></p><button id="client-version" class="client-version" style="position:fixed;right:12px;bottom:8px;padding:0;border:0;color:#6f819d;background:transparent;font-size:.68rem">Версия клиента: 0.3.0</button><div class="join-actions"><button id="update" class="update" hidden>Обновить</button><button id="join" class="join">Войти</button></div></div></section><section id="room-page" class="page room-page" hidden><header class="room-header"><div class="room-brand"><img src="${teamLogoUrl}" alt="" /><strong>BicLex Hub</strong></div><span id="connection-state" class="connection-state">● Online</span></header><div class="room-main"><div><h2>Участники</h2></div><div id="screens" class="screens" hidden></div><ul id="users" class="participants"></ul></div><div class="room-bottom"><div class="media-settings"><div class="suppression"><span>Шумоподавление</span><div class="noise" style="grid-template-columns:repeat(2,1fr)"><button data-noise="off">Off</button><button data-noise="ai">✨ AI</button></div></div><label class="screen-quality">Качество экрана<select id="screen-quality"><option value="medium">Среднее · Full HD 30</option><option value="high">Высокое · 1440p 30</option><option value="maximum">Максимум · до 4K 60</option></select></label></div><div class="controls"><button id="mute" class="control mute" disabled><b>🎤</b><span>Mute</span></button><button id="screen-share" class="control screen-share"><b>🖥</b><span>Демонстрация экрана</span></button><button id="leave" class="control leave" disabled><b>🚪</b><span>Выйти</span></button></div></div></section><section id="server-settings-page" class="page server-settings-page" hidden></section></main>`;
 const setupPage = document.querySelector<HTMLElement>("#setup-page")!,
   roomPage = document.querySelector<HTMLElement>("#room-page")!,
+  serverSettingsPage = document.querySelector<HTMLElement>(
+    "#server-settings-page",
+  )!,
   nameInput = document.querySelector<HTMLInputElement>("#name")!,
   inputDevice = document.querySelector<HTMLSelectElement>("#input-device")!,
   meterBar = document.querySelector<HTMLElement>("#meter-bar")!,
@@ -143,7 +149,6 @@ const setupPage = document.querySelector<HTMLElement>("#setup-page")!,
     document.querySelector<HTMLSelectElement>("#screen-quality")!,
   screens = document.querySelector<HTMLElement>("#screens")!,
   users = document.querySelector<HTMLUListElement>("#users")!,
-  currentMic = document.querySelector<HTMLParagraphElement>("#current-mic")!,
   connectionState = document.querySelector<HTMLElement>("#connection-state")!,
   noiseButtons = [
     ...document.querySelectorAll<HTMLButtonElement>("[data-noise]"),
@@ -183,13 +188,13 @@ const attachFileButton =
   chatPane.querySelector<HTMLButtonElement>("#attach-file")!;
 const chatAttachments =
   chatPane.querySelector<HTMLElement>("#chat-attachments")!;
-let activeServer: HubServer = selectedServer();
+let activeServer: HubServer | undefined = selectedServer();
 let pendingChatAttachments: ChatAttachment[] = [];
 let screenWindow: WebviewWindow | undefined;
 let screenWindowPeerId = "";
 let screenRtc: RTCPeerConnection | undefined;
 let screenEventCleanup: UnlistenFn[] = [];
-versionButton.textContent = "Версия клиента: 0.2.0";
+versionButton.textContent = `Версия клиента: ${CLIENT_VERSION}`;
 let socket: WebSocket | undefined,
   device: Device | undefined,
   sendTransport: MediasoupTypes.Transport | undefined,
@@ -245,41 +250,52 @@ if (!(screenQuality in SCREEN_PROFILES)) screenQuality = "high";
 screenQualitySelect.value = screenQuality;
 function refreshServerSelect() {
   const servers = loadServers();
+  const selected = selectedServer();
   activeServer =
-    servers.find((item) => item.id === selectedServer().id) ?? servers[0];
+    servers.find((item) => item.id === selected?.id) ?? servers[0];
   serverSelect.replaceChildren();
+  if (!servers.length) {
+    serverSelect.add(new Option("Добавьте сервер", ""));
+    serverSelect.disabled = true;
+    updateJoinButton();
+    return;
+  }
+  serverSelect.disabled = false;
   for (const server of servers) {
     const suffix = server.owned ? " · Мой" : "";
     serverSelect.add(new Option(`${server.name}${suffix}`, server.id));
   }
-  serverSelect.value = activeServer.id;
+  serverSelect.value = activeServer?.id ?? "";
+  updateJoinButton();
 }
 refreshServerSelect();
 serverSelect.onchange = () => {
   selectServer(serverSelect.value);
   activeServer = selectedServer();
+  updateJoinButton();
 };
-let serverSettingsWindow: WebviewWindow | undefined;
-serverSettingsButton.onclick = async () => {
-  if (serverSettingsWindow) {
-    await serverSettingsWindow.show().catch(() => undefined);
-    await serverSettingsWindow.setFocus().catch(() => undefined);
-    return;
-  }
-  serverSettingsWindow = new WebviewWindow("server-settings", {
-    url: "index.html?serverSettings=1",
-    title: "Серверы — BicLex Hub",
-    width: 760,
-    height: 720,
-    minWidth: 620,
-    minHeight: 560,
-    center: true,
-  });
-  await serverSettingsWindow.once("tauri://destroyed", () => {
-    serverSettingsWindow = undefined;
-  });
+const serverSettings = mountServerSettings(serverSettingsPage, {
+  onBack: () => showServerSettings(false),
+  onChanged: () => refreshServerSelect(),
+});
+serverSettingsButton.onclick = () => {
+  serverSettings.show();
+  showServerSettings(true);
 };
-if (isTauri) void listen("servers-updated", () => refreshServerSelect());
+function showServerSettings(show: boolean) {
+  setupPage.hidden = show;
+  roomPage.hidden = true;
+  serverSettingsPage.hidden = !show;
+  setupPage.style.display = show ? "none" : "";
+  roomPage.style.display = "none";
+  serverSettingsPage.style.display = show ? "block" : "none";
+  const size = new LogicalSize(760, 720);
+  if (isTauri)
+    void getCurrentWindow()
+      .setSize(size)
+      .then(() => getCurrentWindow().center())
+      .catch(() => undefined);
+}
 function setSetupError(message = "") {
   setupError.textContent = message;
 }
@@ -292,12 +308,14 @@ function showRoom(show: boolean) {
   diagnosticLog("ROOM SHOW", show);
   setupPage.hidden = show;
   roomPage.hidden = !show;
+  serverSettingsPage.hidden = true;
   setupPage.style.display = show ? "none" : "";
   roomPage.style.display = show ? "grid" : "none";
+  serverSettingsPage.style.display = "none";
   serverSelect.disabled = show;
   serverSettingsButton.disabled = show;
-  chatServerName.textContent = activeServer.name;
-  const size = show ? new LogicalSize(1440, 820) : new LogicalSize(760, 680);
+  chatServerName.textContent = activeServer?.name ?? "";
+  const size = show ? new LogicalSize(1560, 760) : new LogicalSize(760, 680);
   if (isTauri)
     void getCurrentWindow()
       .setSize(size)
@@ -361,7 +379,6 @@ async function setNoiseMode(mode: NoiseMode) {
     outgoingTrack = nextTrack;
     oldStream?.getTracks().forEach((track) => track.stop());
     closeAi(oldAi);
-    currentMic.textContent = `🎤 ${nextAi?.inputTrack.label || nextTrack.label || "Микрофон по умолчанию"}`;
   } catch (error) {
     noiseMode = previous;
     localStorage.setItem("biclex-noise-mode", previous);
@@ -534,7 +551,13 @@ function stopMeter() {
   meterValue.textContent = "0%";
 }
 async function probeLocalSignaling() {
-  if (!activeServer.builtin) return false;
+  if (!activeServer) return false;
+  try {
+    if (new URL(activeServer.address).hostname !== "hub.biclex.ru")
+      return false;
+  } catch {
+    return false;
+  }
   return await new Promise<boolean>((resolve) => {
     const ws = new WebSocket("ws://10.70.0.50:8123/ws");
     const timer = window.setTimeout(() => {
@@ -621,6 +644,7 @@ async function toggleMonitor() {
 }
 const renderedChatMessages = new Set<string>();
 function effectiveServer(): HubServer {
+  if (!activeServer) throw new Error("Сервер не выбран");
   return localSignaling
     ? { ...activeServer, address: "http://10.70.0.50:8123" }
     : activeServer;
@@ -950,6 +974,12 @@ async function connect(reconnecting = false, noMicrophone = false) {
     intentionalDisconnect = false;
     stopMonitor();
     activeServer = selectedServer();
+    if (!activeServer) {
+      setSetupError("Сначала добавьте или создайте сервер");
+      joining = false;
+      updateJoinButton();
+      return;
+    }
     renderedChatMessages.clear();
     chatMessages.replaceChildren();
     pendingChatAttachments = [];
@@ -959,6 +989,7 @@ async function connect(reconnecting = false, noMicrophone = false) {
     localSignaling = await probeLocalSignaling();
   } else teardown("Reconnecting");
   try {
+    if (!activeServer) throw new Error("Сервер не выбран");
     const signalingUrl = websocketUrl(activeServer, localSignaling);
     const ws = new WebSocket(signalingUrl);
     socket = ws;
@@ -1011,9 +1042,7 @@ async function connect(reconnecting = false, noMicrophone = false) {
     await subscribeKnownMedia();
     showRoom(true);
     setConnection("online");
-    if (noMicrophone) {
-      currentMic.textContent = "🎤 Микрофон не используется (Ctrl-тест)";
-    } else {
+    if (!noMicrophone) {
       setSetupError("Подключение микрофона...");
       if (noiseMode === "ai")
         try {
@@ -1047,7 +1076,6 @@ async function connect(reconnecting = false, noMicrophone = false) {
           diagnosticLog("PRODUCE RESOLVED", producer.id);
           if (producer.track?.id !== outgoingTrack!.id)
             diagnosticLog("PRODUCE TRACK MISMATCH");
-          currentMic.textContent = `🎤 ${outgoingAi?.inputTrack.label || outgoingTrack!.label || "Микрофон по умолчанию"}`;
         })
         .catch((error) => {
           diagnosticLog(
@@ -1592,7 +1620,7 @@ async function checkForUpdate() {
 if (isTauri) void checkForUpdate();
 diagnosticLog(
   "DIAGNOSTIC BUILD START",
-  "VERSION 0.2.0",
+  `VERSION ${CLIENT_VERSION}`,
   "TURN credentials are handled without logging secrets",
 );
 function instrumentTransport(t: MediasoupTypes.Transport, label: string) {

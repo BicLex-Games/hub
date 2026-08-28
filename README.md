@@ -1,45 +1,101 @@
 # BicLex Hub
 
-Self-hosted голосовая комната BicLex: Tauri 2-клиент, Rust/Axum signaling, mediasoup SFU, чат и файлы.
+BicLex Hub is a self-hosted team space for low-latency voice, screen sharing, persistent chat, and file exchange. It combines a native Windows client with a Rust signaling server, mediasoup SFU, and Coturn fallback.
 
-## Текущий этап
+> The project is under active development. Use a tagged release for deployments and review the security notes before exposing a server to the Internet.
 
-Стабильная версия 0.1.36 зафиксирована в `main` и теге `v0.1.36`. Self-hosted разработка ведётся в `feature/self-hosted-chat`.
+![BicLex Hub overview](docs/assets/biclex-hub-overview.png)
 
-## Компоненты
+## Features
 
-- `web/` — Tauri 2 + TypeScript + `mediasoup-client`.
-- `server/` — Rust + Axum + Tokio + WebSocket + `mediasoup`.
-- `deploy/docker-compose.selfhosted.yml` — автономный server + Coturn.
-- `data/` — постоянная история чата и файлы, не попадающие в Git.
+- low-latency group voice powered by WebRTC and mediasoup;
+- optional AI microphone noise suppression;
+- per-participant volume controls and output-device selection;
+- Full HD, 1440p, and up-to-4K screen sharing;
+- persistent room chat with image and file attachments;
+- multiple saved self-hosted servers in one client;
+- one-click Ubuntu deployment over SSH from the Windows client;
+- TURN fallback for restrictive networks;
+- signed in-app updates for the Windows client.
 
-## Запуск сервера
+## Architecture
 
-Заполните `.env` по образцу `.env.example`. Для self-hosted сервера обязательны `ANNOUNCED_ADDRESS` и секретный `ROOM_TOKEN`:
-
-```powershell
-docker compose --project-directory . --env-file .env -f deploy/docker-compose.selfhosted.yml up -d --build
-curl http://localhost:8123/health
+```text
+Windows client (Tauri 2 + TypeScript)
+  ├─ WebSocket signaling / chat / files ── Rust + Axum server
+  ├─ WebRTC audio and screen media ─────── mediasoup SFU
+  └─ TURN fallback ─────────────────────── Coturn
 ```
 
-Открыть на Ubuntu/firewall: TCP `8123`, TCP/UDP `3478`, UDP `40000-40300`. Диапазон mediasoup можно переназначить через `RTC_MIN_PORT` и `RTC_MAX_PORT`. Файлы ограничены 100 МБ, чат хранит до 500 последних сообщений.
+The SFU server handles media routing; it does not provide end-to-end encryption between participants. WebRTC transport is encrypted with DTLS-SRTP.
 
-## Запуск клиента
+## Quick start: Ubuntu server
+
+Requirements:
+
+- Ubuntu 22.04 or 24.04;
+- Docker Engine with the Compose plugin;
+- a public IPv4 address or a correctly configured NAT;
+- TCP `8123`, TCP/UDP `3478`, and UDP `40000-40300` allowed by the firewall.
+
+Copy the example environment and set strong unique secrets:
+
+```bash
+cp .env.example .env
+editor .env
+docker compose --env-file .env -f deploy/docker-compose.selfhosted.yml up -d
+curl http://127.0.0.1:8123/health
+```
+
+At minimum, configure `ANNOUNCED_ADDRESS`, `ROOM_TOKEN`, `TURN_HOST`, and `TURN_PASSWORD`. Keep `.env` private. Chat history and uploaded files are stored in `./data`.
+
+The Windows client can perform the same deployment from **Servers → Create server**. SSH-key authentication is the default; password authentication is opt-in and the password is not saved.
+
+## Windows client
+
+Download a signed installer from [GitHub Releases](https://github.com/BicLex-Games/hub/releases) when available, or build it locally:
 
 ```powershell
 cd web
-npm install
-npm run dev
+npm ci
+npm run tauri -- build
 ```
 
-Для Tauri: `npm run tauri -- dev`. Клиент хранит список серверов и токены в local storage. Пароль Ubuntu используется только во время deploy и не сохраняется.
+Development mode:
 
-## Серверы в клиенте
+```powershell
+cd web
+npm ci
+npm run tauri -- dev
+```
 
-Шестерёнка на экране входа открывает отдельное окно. В нём можно:
+Open the server settings from the gear button. You can deploy your own Ubuntu server or paste a `BicLex-Hub|2|...` connection code shared by its owner. Treat connection codes as passwords: anyone who has one can enter that room.
 
-- добавить чужой сервер по коду `BicLex-Hub|1|address|token`;
-- автоматически развернуть свой сервер на Ubuntu по SSH;
-- скопировать код своего сервера для других участников.
+## Repository layout
 
-Для автодеплоя Ubuntu нужен SSH-доступ и либо `root`, либо пользователь с `sudo`. Первый SSH host key считывается и затем закрепляется для всех команд этого deploy.
+- `web/` — Tauri 2 desktop client, TypeScript UI, and `mediasoup-client`;
+- `server/` — Rust/Axum signaling, chat, uploads, and mediasoup control;
+- `deploy/docker-compose.selfhosted.yml` — server and Coturn deployment;
+- `data/` — persistent runtime data, ignored by Git;
+- `updates/` — signed client update artifacts, ignored by Git.
+
+## Configuration
+
+| Variable | Purpose |
+| --- | --- |
+| `ANNOUNCED_ADDRESS` | Public IP advertised in mediasoup ICE candidates |
+| `ROOM_TOKEN` | Secret required by WebSocket, chat, and upload endpoints |
+| `RTC_MIN_PORT` / `RTC_MAX_PORT` | mediasoup UDP port range |
+| `TURN_HOST` | Public hostname or IP of Coturn |
+| `TURN_USERNAME` / `TURN_PASSWORD` | Coturn long-term credentials |
+| `DATA_DIR` | Persistent chat and upload directory inside the container |
+
+## Contributing
+
+Issues and pull requests are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md), use a focused branch, and describe how you tested user-visible changes. Please report security issues according to [SECURITY.md](SECURITY.md).
+
+Russian documentation: [README.ru.md](README.ru.md).
+
+## License
+
+BicLex Hub is licensed under the [GNU Affero General Public License v3.0](LICENSE).

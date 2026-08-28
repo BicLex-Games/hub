@@ -4,22 +4,11 @@ export type HubServer = {
   address: string;
   token: string;
   owned: boolean;
-  builtin?: boolean;
   createdAt: number;
 };
 
 const SERVERS_KEY = "biclex-hub-servers-v1";
 const SELECTED_KEY = "biclex-hub-selected-server";
-
-export const builtinServer: HubServer = {
-  id: "biclex-production",
-  name: "BicLex Production",
-  address: "https://hub.biclex.ru",
-  token: "",
-  owned: false,
-  builtin: true,
-  createdAt: 0,
-};
 
 export function normalizeAddress(value: string): string {
   let address = value.trim().replace(/\/+$/, "");
@@ -38,7 +27,7 @@ export function loadServers(): HubServer[] {
   } catch {
     saved = [];
   }
-  const map = new Map<string, HubServer>([[builtinServer.id, builtinServer]]);
+  const map = new Map<string, HubServer>();
   for (const item of saved) {
     if (!item?.id || !item.name || !item.address) continue;
     try {
@@ -57,18 +46,14 @@ export function loadServers(): HubServer[] {
 export function saveServers(servers: HubServer[]) {
   localStorage.setItem(
     SERVERS_KEY,
-    JSON.stringify(servers.filter((item) => !item.builtin)),
+    JSON.stringify(servers),
   );
 }
 
-export function selectedServer(): HubServer {
+export function selectedServer(): HubServer | undefined {
   const servers = loadServers();
   const selectedId = localStorage.getItem(SELECTED_KEY);
-  return (
-    servers.find((item) => item.id === selectedId) ??
-    servers[0] ??
-    builtinServer
-  );
+  return servers.find((item) => item.id === selectedId) ?? servers[0];
 }
 
 export function selectServer(id: string) {
@@ -96,22 +81,31 @@ export function uniqueServerName(requested: string, servers = loadServers()) {
 }
 
 export function createConnectionCode(server: HubServer) {
-  return `BicLex-Hub|1|${encodeURIComponent(server.address)}|${encodeURIComponent(server.token)}`;
+  return `BicLex-Hub|2|${encodeURIComponent(server.name)}|${encodeURIComponent(server.address)}|${encodeURIComponent(server.token)}`;
 }
 
 export function parseConnectionCode(code: string) {
-  const [kind, version, encodedAddress, encodedToken] = code.trim().split("|");
-  if (
-    !["BicLex-Hub", "BICLEX-HUB"].includes(kind) ||
-    version !== "1" ||
-    !encodedAddress ||
-    !encodedToken
-  )
+  const parts = code.trim().split("|");
+  const [kind, version] = parts;
+  if (!["BicLex-Hub", "BICLEX-HUB"].includes(kind))
+    throw new Error("Некорректный код подключения");
+  let encodedName = "";
+  let encodedAddress = "";
+  let encodedToken = "";
+  if (version === "2" && parts.length === 5) {
+    [, , encodedName, encodedAddress, encodedToken] = parts;
+  } else if (version === "1" && parts.length === 4) {
+    [, , encodedAddress, encodedToken] = parts;
+  } else {
+    throw new Error("Неподдерживаемая версия кода подключения");
+  }
+  if (!encodedAddress || !encodedToken)
     throw new Error("Некорректный код подключения");
   const address = normalizeAddress(decodeURIComponent(encodedAddress));
   const token = decodeURIComponent(encodedToken).trim();
+  const name = decodeURIComponent(encodedName).trim() || "Без названия";
   if (!token) throw new Error("В коде отсутствует токен комнаты");
-  return { address, token };
+  return { name, address, token };
 }
 
 export function websocketUrl(server: HubServer, local = false) {

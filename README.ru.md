@@ -1,0 +1,60 @@
+# BicLex Hub
+
+BicLex Hub — self-hosted пространство команды с голосовой связью, демонстрацией экрана, постоянным чатом и передачей файлов. Windows-клиент написан на Tauri 2 и TypeScript, signaling-сервер — на Rust/Axum, медиатрафик маршрутизирует mediasoup, а Coturn используется как fallback.
+
+## Возможности
+
+- групповая голосовая связь через WebRTC;
+- AI-шумоподавление микрофона;
+- выбор устройств ввода/вывода и громкость каждого участника;
+- демонстрация экрана Full HD, 1440p и до 4K;
+- чат с историей, изображениями и файлами;
+- несколько self-hosted серверов в одном клиенте;
+- автоматическое развёртывание на Ubuntu по SSH;
+- TURN fallback и подписанные обновления Windows-клиента.
+
+## Быстрый запуск сервера
+
+Нужны Ubuntu 22.04/24.04, Docker Compose, публичный IPv4 или корректный NAT. Откройте TCP `8123`, TCP/UDP `3478` и UDP `40000-40300`.
+
+```bash
+cp .env.example .env
+nano .env
+docker compose --env-file .env -f deploy/docker-compose.selfhosted.yml up -d
+curl http://127.0.0.1:8123/health
+```
+
+Обязательно задайте `ANNOUNCED_ADDRESS`, длинный случайный `ROOM_TOKEN`, `TURN_HOST` и `TURN_PASSWORD`. Не публикуйте `.env`. История чата и файлы сохраняются в `./data`.
+
+В Windows-клиенте тот же процесс доступен через **Серверы → Создать сервер**. По умолчанию используется SSH-ключ; режим с паролем включается отдельно, пароль не сохраняется.
+
+## Клиент
+
+```powershell
+cd web
+npm ci
+npm run tauri -- dev
+```
+
+Production installer:
+
+```powershell
+npm run tauri -- build
+```
+
+Через шестерёнку на экране входа можно создать свой сервер или добавить чужой по коду `BicLex-Hub|2|...`. Код содержит адрес и токен комнаты, поэтому передавайте его как пароль только доверенным людям.
+
+## Разработка
+
+Структура репозитория:
+
+- `web/` — desktop-клиент;
+- `server/` — signaling, чат, файлы и управление mediasoup;
+- `deploy/docker-compose.selfhosted.yml` — server + Coturn;
+- `data/` — постоянные данные, исключённые из Git.
+
+Правила участия находятся в [CONTRIBUTING.md](CONTRIBUTING.md), политика безопасности — в [SECURITY.md](SECURITY.md).
+
+## Лицензия
+
+[GNU Affero General Public License v3.0](LICENSE).

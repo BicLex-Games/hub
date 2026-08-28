@@ -1,0 +1,200 @@
+.server-settings-page {
+  overflow-y: auto;
+  background: radial-gradient(circle at top left, #173665, #091224 55%);
+}
+.settings-shell {
+  width: min(760px, calc(100vw - 36px));
+  margin: 0 auto;
+  padding: 22px 0 36px;
+}
+.settings-header {
+  display: grid;
+  grid-template-columns: auto 50px minmax(0, 1fr);
+  align-items: center;
+  gap: 13px;
+  margin-bottom: 20px;
+}
+.settings-header img {
+  width: 50px;
+  height: 50px;
+  border-radius: 10px;
+  object-fit: cover;
+}
+.settings-header h1,
+.settings-header p,
+.server-form h2,
+.server-form p {
+  margin: 0;
+}
+.settings-header h1 {
+  font-size: 1.35rem;
+}
+.settings-header p,
+.form-description {
+  margin-top: 4px;
+  color: #90a8ca;
+  font-size: 0.84rem;
+}
+.settings-back {
+  padding: 9px 12px;
+}
+.settings-actions {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.server-settings-page button,
+.server-settings-page input,
+.server-settings-page textarea {
+  font: inherit;
+}
+.server-settings-page button {
+  padding: 10px 15px;
+  border: 1px solid #405879;
+  border-radius: 9px;
+  color: #dceaff;
+  background: #14243d;
+  cursor: pointer;
+}
+.server-settings-page button:hover {
+  border-color: #5d83b6;
+}
+.server-settings-page button.primary {
+  border-color: #3478e5;
+  background: #286bd5;
+}
+.server-settings-page button.success {
+  border-color: #2ea765;
+  color: #f0fff6;
+  background: #16844a;
+}
+.server-settings-page button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+.server-form {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+  border: 1px solid #344c70;
+  border-radius: 12px;
+  background: #0f1d33;
+}
+.server-form label {
+  display: grid;
+  gap: 6px;
+  color: #b9cbe4;
+  font-size: 0.85rem;
+}
+.server-form .auth-toggle {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: max-content;
+  cursor: pointer;
+}
+.server-form .auth-toggle input {
+  width: auto;
+}
+.ssh-key-hint,
+.deploy-elapsed {
+  color: #90a8ca;
+  font-size: 0.78rem;
+}
+.server-form input,
+.server-form textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #3b5274;
+  border-radius: 8px;
+  color: white;
+  background: #0b172a;
+  resize: vertical;
+}
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 9px;
+}
+#deploy-progress {
+  max-height: 210px;
+  margin: 0;
+  padding: 10px;
+  overflow: auto;
+  border-radius: 8px;
+  color: #b9d4fb;
+  background: #07101e;
+  white-space: pre-wrap;
+}
+.settings-error {
+  min-height: 20px;
+  margin: 8px 0;
+  color: #ff8f8f;
+}
+.server-list {
+  display: grid;
+  gap: 9px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.server-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 15px;
+  padding: 14px;
+  border: 1px solid #2e4567;
+  border-radius: 11px;
+  background: #101d31dd;
+}
+.server-list li > div:first-child {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.server-list strong,
+.server-list small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.server-list small {
+  color: #8299bb;
+}
+.badges {
+  width: max-content;
+  padding: 2px 7px;
+  border-radius: 999px;
+  color: #8dd9ae;
+  background: #123c2b;
+  font-size: 0.69rem;
+}
+.server-actions {
+  display: flex;
+  gap: 6px;
+}
+.server-actions .remove {
+  color: #ffb3b3;
+}
+.server-list .empty-servers {
+  display: block;
+  padding: 28px 18px;
+  color: #90a8ca;
+  text-align: center;
+}
+@media (max-width: 680px) {
+  .settings-header {
+    grid-template-columns: auto 42px minmax(0, 1fr);
+  }
+  .settings-header img {
+    width: 42px;
+    height: 42px;
+  }
+  .server-list li {
+    grid-template-columns: 1fr;
+  }
+  .server-actions {
+    flex-wrap: wrap;
+  }
+}

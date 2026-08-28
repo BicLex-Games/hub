@@ -89,6 +89,24 @@ button:disabled {
   border-color: #4b9cff;
   box-shadow: 0 0 0 3px #3284ed2b;
 }
+.server-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 42px;
+  align-items: end;
+  gap: 8px;
+}
+.server-control label {
+  min-width: 0;
+}
+.server-control button {
+  width: 42px;
+  height: 42px;
+  border: 1px solid #3b4c69;
+  border-radius: 10px;
+  color: #d7e5fa;
+  background: #17243a;
+  font-size: 1.05rem;
+}
 .meter-block {
   display: grid;
   gap: 8px;
@@ -141,10 +159,21 @@ button:disabled {
   background: linear-gradient(135deg, #2563eb, #3975dd);
 }
 .room-page {
+  display: grid;
+  grid-template-columns: minmax(370px, 30%) minmax(0, 70%);
+  padding: 14px;
+  gap: 14px;
+}
+.conference-pane {
   display: flex;
+  min-width: 0;
+  min-height: 0;
   flex-direction: column;
-  padding: 22px;
-  gap: 20px;
+  gap: 15px;
+  padding: 9px;
+  border: 1px solid #2e405e;
+  border-radius: 15px;
+  background: #0d1729b5;
 }
 .room-header {
   display: flex;
@@ -273,6 +302,163 @@ button:disabled {
   display: grid;
   gap: 15px;
 }
+.chat-pane {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid #2e405e;
+  border-radius: 15px;
+  background: #0d1729dd;
+}
+.chat-pane > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 65px;
+  padding: 13px 17px;
+  border-bottom: 1px solid #293c59;
+}
+.chat-pane h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+.chat-pane header div {
+  display: grid;
+  gap: 3px;
+}
+#chat-server-name,
+#upload-state {
+  color: #8299bb;
+  font-size: 0.75rem;
+}
+#upload-state {
+  max-width: 45%;
+  color: #fbbf8a;
+  text-align: right;
+}
+.chat-messages {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  gap: 9px;
+  padding: 15px 17px;
+  overflow-y: auto;
+  scrollbar-color: #30486b transparent;
+}
+.chat-message {
+  width: min(78%, 700px);
+  padding: 10px 12px;
+  border: 1px solid #304663;
+  border-radius: 12px 12px 12px 4px;
+  background: #15243b;
+}
+.chat-message.own {
+  align-self: flex-end;
+  border-color: #285fae;
+  border-radius: 12px 12px 4px 12px;
+  background: #173968;
+}
+.chat-message > header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.chat-message strong {
+  color: #90c8ff;
+  font-size: 0.8rem;
+}
+.chat-message time {
+  color: #7f93af;
+  font-size: 0.68rem;
+}
+.chat-message p {
+  margin: 6px 0 0;
+  color: #edf5ff;
+  line-height: 1.38;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.message-attachments {
+  display: grid;
+  gap: 7px;
+  margin-top: 8px;
+}
+.message-attachments a {
+  display: grid;
+  gap: 5px;
+  overflow: hidden;
+  border: 1px solid #3b5375;
+  border-radius: 9px;
+  color: #cbe3ff;
+  background: #0d192b;
+  text-decoration: none;
+}
+.message-attachments img {
+  display: block;
+  width: 100%;
+  max-height: 320px;
+  object-fit: contain;
+  background: #060b13;
+}
+.message-attachments span {
+  padding: 7px 9px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.76rem;
+}
+.chat-attachments {
+  display: flex;
+  gap: 6px;
+  padding: 0 12px;
+  overflow-x: auto;
+}
+.chat-attachments:empty {
+  display: none;
+}
+.chat-attachments button {
+  flex: 0 0 auto;
+  padding: 5px 8px;
+  border-radius: 7px;
+  color: #cfe2ff;
+  background: #263c5d;
+  font-size: 0.72rem;
+}
+#chat-form {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 8px;
+  padding: 12px;
+}
+#chat-form button {
+  min-height: 42px;
+  padding: 0 14px;
+  border-radius: 9px;
+  color: white;
+  background: #286bd5;
+}
+#attach-file {
+  padding: 0 !important;
+  color: #cfe2ff !important;
+  background: #1b2c47 !important;
+  font-size: 1.35rem;
+}
+#chat-input {
+  min-height: 42px;
+  max-height: 130px;
+  padding: 10px 12px;
+  resize: vertical;
+  border: 1px solid #3a506f;
+  border-radius: 9px;
+  outline: none;
+  color: white;
+  background: #101d31;
+  font: inherit;
+}
 .media-settings {
   display: grid;
   gap: 0;
@@ -371,6 +557,14 @@ button:disabled {
   .room-page {
     padding: 15px;
     gap: 12px;
+  }
+}
+@media (max-width: 1050px) {
+  .room-page {
+    grid-template-columns: minmax(330px, 42%) minmax(0, 58%);
+  }
+  .chat-message {
+    width: 92%;
   }
 }
 .screens {

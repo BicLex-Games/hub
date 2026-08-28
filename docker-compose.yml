@@ -1,0 +1,41 @@
+services:
+  server:
+    build:
+      context: ./server
+    container_name: biclex-hub-server
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "8123:8123/tcp"
+      - "40000-40100:40000-40100/udp"
+    volumes:
+      - ./logs:/var/log/biclex-hub
+      - ./updates:/updates:ro
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "--timeout=3", "http://127.0.0.1:8123/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+  turn:
+    image: coturn/coturn:4.6.3
+    container_name: biclex-hub-turn
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - .env
+    command:
+      - -n
+      - --log-file=stdout
+      - --fingerprint
+      - --listening-ip=0.0.0.0
+      - --relay-ip=${TURN_INTERNAL_IP}
+      - --lt-cred-mech
+      - --realm=turn.biclex.ru
+      - --user=${TURN_USERNAME}:${TURN_PASSWORD}
+      - --external-ip=${ANNOUNCED_ADDRESS}/${TURN_INTERNAL_IP}
+      - --min-port=40200
+      - --max-port=40300
+      - --no-cli
+    # host network is required so Coturn advertises and relays on the host WAN/LAN interfaces.

@@ -1,0 +1,21 @@
+.join-actions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.join-actions:has(.update:not([hidden])) {
+  grid-template-columns: 1fr 1fr;
+}
+
+.join-actions .join {
+  width: 100%;
+}
+
+.update {
+  min-height: 48px;
+  border-radius: 11px;
+  color: #fff;
+  font-weight: 700;
+  background: #0f9f78;
+}

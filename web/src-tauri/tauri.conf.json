@@ -1,0 +1,42 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Biclex Hub",
+  "version": "0.1.36",
+  "identifier": "com.biclex.hub",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Biclex Hub",
+        "width": 760,
+        "height": 620,
+        "minWidth": 540,
+        "minHeight": 500,
+        "resizable": true
+      }
+    ],
+    "security": { "csp": null }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "createUpdaterArtifacts": true,
+    "icon": ["icons/icon.svg"],
+    "resources": ["resources/WebView2Loader.dll"],
+    "windows": {
+      "webviewInstallMode": { "type": "downloadBootstrapper" },
+      "nsis": { "installerHooks": "./windows/hooks.nsh" }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDcyRTU5OTVGOTg5OEQ1MEYKUldRUDFaaVlYNW5sY3V5ZEZ6UHVzNXVqNnp1OWFLdU9abTJUYjgzL2YxZlVCUVJkdW13WURBcHIK",
+      "endpoints": ["https://hub.biclex.ru/updates/latest.json"]
+    }
+  }
+}

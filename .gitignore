@@ -1,0 +1,13 @@
+target/
+node_modules/
+dist/
+build/
+.env
+logs/*
+!logs/.gitkeep
+
+# Local Tauri updater signing material and published installer artifacts
+web/src-tauri/biclex-updater.key
+web/src-tauri/biclex-updater.key.pub
+updates/*
+!updates/.gitkeep

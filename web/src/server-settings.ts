@@ -77,7 +77,7 @@ function render() {
 document.querySelector<HTMLButtonElement>("#add-server")!.onclick = () => {
   setError();
   form.hidden = false;
-  form.innerHTML = `<h2>Добавить сервер</h2><label>Название<input id="add-name" placeholder="Без названия"/></label><label>Код подключения<textarea id="add-code" rows="3" placeholder="BICLEX-HUB|1|..."></textarea></label><div><button id="add-cancel">Отмена</button><button id="add-confirm" class="primary">Добавить</button></div>`;
+  form.innerHTML = `<h2>Добавить сервер</h2><label>Название<input id="add-name" placeholder="Без названия"/></label><label>Код подключения<textarea id="add-code" rows="3" placeholder="BicLex-Hub|1|..."></textarea></label><div><button id="add-cancel">Отмена</button><button id="add-confirm" class="primary">Добавить</button></div>`;
   form.querySelector<HTMLButtonElement>("#add-cancel")!.onclick = () =>
     (form.hidden = true);
   form.querySelector<HTMLButtonElement>("#add-confirm")!.onclick = () => {

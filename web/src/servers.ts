@@ -96,13 +96,13 @@ export function uniqueServerName(requested: string, servers = loadServers()) {
 }
 
 export function createConnectionCode(server: HubServer) {
-  return `BICLEX-HUB|1|${encodeURIComponent(server.address)}|${encodeURIComponent(server.token)}`;
+  return `BicLex-Hub|1|${encodeURIComponent(server.address)}|${encodeURIComponent(server.token)}`;
 }
 
 export function parseConnectionCode(code: string) {
   const [kind, version, encodedAddress, encodedToken] = code.trim().split("|");
   if (
-    kind !== "BICLEX-HUB" ||
+    !["BicLex-Hub", "BICLEX-HUB"].includes(kind) ||
     version !== "1" ||
     !encodedAddress ||
     !encodedToken

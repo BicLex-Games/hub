@@ -19,10 +19,11 @@ import {
   type HubServer,
 } from "./servers";
 import { mountServerSettings } from "./server-settings";
+import { getLanguage, setLanguage, t, type Language } from "./i18n";
 import "./style.css";
 import "./update.css";
 
-const CLIENT_VERSION = "0.3.0";
+const CLIENT_VERSION = "0.3.1";
 
 type Request = { requestId: string; type: string; [key: string]: unknown };
 type ServerMessage = {
@@ -127,12 +128,33 @@ const participantVolumes: Record<string, number> = (() => {
     return {};
   }
 })();
-app.innerHTML = `<main class="app-shell"><section id="setup-page" class="page setup-page"><div class="brand"><img src="${teamLogoUrl}" alt="BicLex" /><div><h1>BicLex Hub</h1><p>Голосовая связь команды</p></div></div><div class="setup-form"><label>Имя<input id="name" maxlength="32" autocomplete="name" placeholder="Ваше имя" /></label><label>Микрофон<select id="input-device"><option value="">Микрофон по умолчанию</option></select></label><div class="meter-block"><div class="meter-title"><span>Уровень микрофона</span><span id="meter-value">0%</span></div><div class="meter"><i id="meter-bar"></i></div></div><button id="monitor" class="secondary">🎧 Проверить микрофон</button><p class="hint">Для проверки лучше использовать наушники</p><p id="setup-error" class="setup-error" role="alert"></p><button id="client-version" class="client-version" style="position:fixed;right:12px;bottom:8px;padding:0;border:0;color:#6f819d;background:transparent;font-size:.68rem">Версия клиента: 0.3.0</button><div class="join-actions"><button id="update" class="update" hidden>Обновить</button><button id="join" class="join">Войти</button></div></div></section><section id="room-page" class="page room-page" hidden><header class="room-header"><div class="room-brand"><img src="${teamLogoUrl}" alt="" /><strong>BicLex Hub</strong></div><span id="connection-state" class="connection-state">● Online</span></header><div class="room-main"><div><h2>Участники</h2></div><div id="screens" class="screens" hidden></div><ul id="users" class="participants"></ul></div><div class="room-bottom"><div class="media-settings"><div class="suppression"><span>Шумоподавление</span><div class="noise" style="grid-template-columns:repeat(2,1fr)"><button data-noise="off">Off</button><button data-noise="ai">✨ AI</button></div></div><label class="screen-quality">Качество экрана<select id="screen-quality"><option value="medium">Среднее · Full HD 30</option><option value="high">Высокое · 1440p 30</option><option value="maximum">Максимум · до 4K 60</option></select></label></div><div class="controls"><button id="mute" class="control mute" disabled><b>🎤</b><span>Mute</span></button><button id="screen-share" class="control screen-share"><b>🖥</b><span>Демонстрация экрана</span></button><button id="leave" class="control leave" disabled><b>🚪</b><span>Выйти</span></button></div></div></section><section id="server-settings-page" class="page server-settings-page" hidden></section></main>`;
+app.innerHTML = `<main class="app-shell">
+  <section id="setup-page" class="page setup-page">
+    <div class="brand"><img src="${teamLogoUrl}" alt="BicLex" /><div><h1>BicLex Hub</h1><p>${t("tagline")}</p></div></div>
+    <div class="setup-form">
+      <label>${t("language")}<select id="language"><option value="en">English</option><option value="ru">Русский</option></select></label>
+      <label>${t("name")}<input id="name" maxlength="32" autocomplete="name" placeholder="${t("namePlaceholder")}" /></label>
+      <label>${t("microphone")}<select id="input-device"><option value="">${t("defaultMicrophone")}</option></select></label>
+      <div class="meter-block"><div class="meter-title"><span>${t("microphoneLevel")}</span><span id="meter-value">0%</span></div><div class="meter"><i id="meter-bar"></i></div></div>
+      <button id="monitor" class="secondary">${t("testMicrophone")}</button>
+      <p class="hint">${t("headphonesHint")}</p><p id="setup-error" class="setup-error" role="alert"></p>
+      <button id="client-version" class="client-version" style="position:fixed;right:12px;bottom:8px;padding:0;border:0;color:#6f819d;background:transparent;font-size:.68rem">${t("clientVersion", { version: CLIENT_VERSION })}</button>
+      <div class="join-actions"><button id="update" class="update" hidden>${t("update")}</button><button id="join" class="join">${t("join")}</button></div>
+    </div>
+  </section>
+  <section id="room-page" class="page room-page" hidden>
+    <header class="room-header"><div class="room-brand"><img src="${teamLogoUrl}" alt="" /><strong>BicLex Hub</strong></div><span id="connection-state" class="connection-state">${t("online")}</span></header>
+    <div class="room-main"><div><h2>${t("participants")}</h2></div><div id="screens" class="screens" hidden></div><ul id="users" class="participants"></ul></div>
+    <div class="room-bottom"><div class="media-settings"><div class="suppression"><span>${t("noiseSuppression")}</span><div class="noise" style="grid-template-columns:repeat(2,1fr)"><button data-noise="off">Off</button><button data-noise="ai">✨ AI</button></div></div><label class="screen-quality">${t("screenQuality")}<select id="screen-quality"><option value="medium">${t("qualityMedium")}</option><option value="high">${t("qualityHigh")}</option><option value="maximum">${t("qualityMaximum")}</option></select></label></div><div class="controls"><button id="mute" class="control mute" disabled><b>🎤</b><span>${t("mute")}</span></button><button id="screen-share" class="control screen-share"><b>🖥</b><span>${t("screenShare")}</span></button><button id="leave" class="control leave" disabled><b>🚪</b><span>${t("leave")}</span></button></div></div>
+  </section>
+  <section id="server-settings-page" class="page server-settings-page" hidden></section>
+</main>`;
 const setupPage = document.querySelector<HTMLElement>("#setup-page")!,
   roomPage = document.querySelector<HTMLElement>("#room-page")!,
   serverSettingsPage = document.querySelector<HTMLElement>(
     "#server-settings-page",
   )!,
+  languageSelect = document.querySelector<HTMLSelectElement>("#language")!,
   nameInput = document.querySelector<HTMLInputElement>("#name")!,
   inputDevice = document.querySelector<HTMLSelectElement>("#input-device")!,
   meterBar = document.querySelector<HTMLElement>("#meter-bar")!,
@@ -154,14 +176,13 @@ const setupPage = document.querySelector<HTMLElement>("#setup-page")!,
     ...document.querySelectorAll<HTMLButtonElement>("[data-noise]"),
   ];
 const outputDeviceLabel = document.createElement("label");
-outputDeviceLabel.innerHTML =
-  'Наушники / динамики<select id="output-device"><option value="">Устройство вывода по умолчанию</option></select>';
+outputDeviceLabel.innerHTML = `${t("outputDevice")}<select id="output-device"><option value="">${t("defaultOutputDevice")}</option></select>`;
 inputDevice.closest("label")?.after(outputDeviceLabel);
 const outputDevice =
   outputDeviceLabel.querySelector<HTMLSelectElement>("#output-device")!;
 const serverControl = document.createElement("div");
 serverControl.className = "server-control";
-serverControl.innerHTML = `<label>Сервер<select id="hub-server"></select></label><button id="server-settings" type="button" aria-label="Настройки серверов" title="Настройки серверов">⚙</button>`;
+serverControl.innerHTML = `<label>${t("server")}<select id="hub-server"></select></label><button id="server-settings" type="button" aria-label="${t("serverSettings")}" title="${t("serverSettings")}">⚙</button>`;
 outputDeviceLabel.after(serverControl);
 const serverSelect =
   serverControl.querySelector<HTMLSelectElement>("#hub-server")!;
@@ -175,7 +196,7 @@ conferencePane.className = "conference-pane";
 conferencePane.append(roomHeader, roomMain, roomBottom);
 const chatPane = document.createElement("section");
 chatPane.className = "chat-pane";
-chatPane.innerHTML = `<header><div><h2>Чат</h2><span id="chat-server-name"></span></div><span id="upload-state"></span></header><div id="chat-messages" class="chat-messages"></div><div id="chat-attachments" class="chat-attachments"></div><form id="chat-form"><button id="attach-file" type="button" title="Добавить фото или файл">＋</button><textarea id="chat-input" rows="1" maxlength="4000" placeholder="Написать сообщение…"></textarea><button id="send-chat" type="submit">Отправить</button><input id="file-input" type="file" multiple hidden /></form>`;
+chatPane.innerHTML = `<header><div><h2>${t("chat")}</h2><span id="chat-server-name"></span></div><span id="upload-state"></span></header><div id="chat-messages" class="chat-messages"></div><div id="chat-attachments" class="chat-attachments"></div><form id="chat-form"><button id="attach-file" type="button" title="${t("addFile")}">＋</button><textarea id="chat-input" rows="1" maxlength="4000" placeholder="${t("messagePlaceholder")}"></textarea><button id="send-chat" type="submit">${t("send")}</button><input id="file-input" type="file" multiple hidden /></form>`;
 roomPage.append(conferencePane, chatPane);
 const chatMessages = chatPane.querySelector<HTMLElement>("#chat-messages")!;
 const chatServerName =
@@ -194,7 +215,7 @@ let screenWindow: WebviewWindow | undefined;
 let screenWindowPeerId = "";
 let screenRtc: RTCPeerConnection | undefined;
 let screenEventCleanup: UnlistenFn[] = [];
-versionButton.textContent = `Версия клиента: ${CLIENT_VERSION}`;
+versionButton.textContent = t("clientVersion", { version: CLIENT_VERSION });
 let socket: WebSocket | undefined,
   device: Device | undefined,
   sendTransport: MediasoupTypes.Transport | undefined,
@@ -246,23 +267,27 @@ let noiseMode =
   localSignaling = false,
   turnIceServers: RTCIceServer[] = [];
 nameInput.value = localStorage.getItem("biclex-username") ?? "";
+languageSelect.value = getLanguage();
+languageSelect.onchange = () => {
+  setLanguage(languageSelect.value as Language);
+  location.reload();
+};
 if (!(screenQuality in SCREEN_PROFILES)) screenQuality = "high";
 screenQualitySelect.value = screenQuality;
 function refreshServerSelect() {
   const servers = loadServers();
   const selected = selectedServer();
-  activeServer =
-    servers.find((item) => item.id === selected?.id) ?? servers[0];
+  activeServer = servers.find((item) => item.id === selected?.id) ?? servers[0];
   serverSelect.replaceChildren();
   if (!servers.length) {
-    serverSelect.add(new Option("Добавьте сервер", ""));
+    serverSelect.add(new Option(t("addServerPrompt"), ""));
     serverSelect.disabled = true;
     updateJoinButton();
     return;
   }
   serverSelect.disabled = false;
   for (const server of servers) {
-    const suffix = server.owned ? " · Мой" : "";
+    const suffix = server.owned ? t("myServerSuffix") : "";
     serverSelect.add(new Option(`${server.name}${suffix}`, server.id));
   }
   serverSelect.value = activeServer?.id ?? "";
@@ -301,7 +326,7 @@ function setSetupError(message = "") {
 }
 function setConnection(state: "online" | "reconnecting") {
   connectionState.textContent =
-    state === "online" ? "● Online" : "● Переподключение";
+    state === "online" ? t("online") : t("reconnecting");
   connectionState.classList.toggle("reconnecting", state === "reconnecting");
 }
 function showRoom(show: boolean) {
@@ -407,7 +432,7 @@ async function captureDirect(mode: "off" | "standard") {
         audio: constraints(mode),
         video: false,
       }),
-      "Микрофон",
+      t("microphone"),
     );
   } catch (error) {
     if (!selectedDeviceId) throw error;
@@ -419,7 +444,7 @@ async function captureDirect(mode: "off" | "standard") {
         audio: constraints(mode),
         video: false,
       }),
-      "Микрофон",
+      t("microphone"),
     );
   }
 }
@@ -437,9 +462,14 @@ async function refreshDevices(permission = false) {
   const devices = await navigator.mediaDevices.enumerateDevices();
   const inputDevices = devices.filter((d) => d.kind === "audioinput");
   const outputDevices = devices.filter((d) => d.kind === "audiooutput");
-  inputDevice.replaceChildren(new Option("Микрофон по умолчанию", ""));
+  inputDevice.replaceChildren(new Option(t("defaultMicrophone"), ""));
   inputDevices.forEach((d, i) =>
-    inputDevice.add(new Option(d.label || `Микрофон ${i + 1}`, d.deviceId)),
+    inputDevice.add(
+      new Option(
+        d.label || t("microphoneNumber", { number: i + 1 }),
+        d.deviceId,
+      ),
+    ),
   );
   if (
     selectedDeviceId &&
@@ -451,12 +481,13 @@ async function refreshDevices(permission = false) {
     localStorage.removeItem("biclex-input-device");
     inputDevice.value = "";
   }
-  outputDevice.replaceChildren(
-    new Option("Устройство вывода по умолчанию", ""),
-  );
+  outputDevice.replaceChildren(new Option(t("defaultOutputDevice"), ""));
   outputDevices.forEach((d, i) =>
     outputDevice.add(
-      new Option(d.label || `Устройство вывода ${i + 1}`, d.deviceId),
+      new Option(
+        d.label || t("outputDeviceNumber", { number: i + 1 }),
+        d.deviceId,
+      ),
     ),
   );
   if (
@@ -612,7 +643,7 @@ function stopMonitor() {
   closeAi(monitorAi);
   monitorAi = undefined;
   stopMeter();
-  monitorButton.textContent = "🎧 Проверить микрофон";
+  monitorButton.textContent = t("testMicrophone");
 }
 async function toggleMonitor() {
   if (monitorAudio) {
@@ -634,25 +665,26 @@ async function toggleMonitor() {
     await applyAudioOutput(monitorAudio);
     await monitorAudio.play();
     await startMeter(track);
-    monitorButton.textContent = "■ Остановить проверку";
+    monitorButton.textContent = t("stopMicrophoneTest");
   } catch (error) {
     stopMonitor();
     setSetupError(
-      error instanceof Error ? error.message : "Не удалось открыть микрофон",
+      error instanceof Error ? error.message : t("microphoneFailed"),
     );
   }
 }
 const renderedChatMessages = new Set<string>();
 function effectiveServer(): HubServer {
-  if (!activeServer) throw new Error("Сервер не выбран");
+  if (!activeServer) throw new Error(t("serverNotSelected"));
   return localSignaling
     ? { ...activeServer, address: "http://10.70.0.50:8123" }
     : activeServer;
 }
 function fileSize(size: number) {
-  if (size < 1024) return `${size} Б`;
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} КБ`;
-  return `${(size / 1024 / 1024).toFixed(1)} МБ`;
+  if (size < 1024) return t("bytes", { value: size });
+  if (size < 1024 * 1024)
+    return t("kilobytes", { value: (size / 1024).toFixed(1) });
+  return t("megabytes", { value: (size / 1024 / 1024).toFixed(1) });
 }
 function attachmentUrl(attachment: ChatAttachment) {
   return authenticatedUrl(effectiveServer(), attachment.url);
@@ -669,12 +701,15 @@ function renderChatMessage(message: ChatMessage) {
   const timestamp = document.createElement("time");
   const date = new Date(message.createdAt);
   timestamp.dateTime = date.toISOString();
-  timestamp.textContent = date.toLocaleString("ru-RU", {
-    day: "2-digit",
-    month: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  timestamp.textContent = date.toLocaleString(
+    getLanguage() === "ru" ? "ru-RU" : "en-GB",
+    {
+      day: "2-digit",
+      month: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    },
+  );
   header.append(sender, timestamp);
   item.append(header);
   if (message.text) {
@@ -723,7 +758,7 @@ function renderPendingAttachments() {
   }
 }
 async function uploadChatFiles(files: FileList) {
-  uploadState.textContent = "Загрузка…";
+  uploadState.textContent = t("uploading");
   attachFileButton.disabled = true;
   try {
     for (const file of [...files]) {
@@ -737,7 +772,9 @@ async function uploadChatFiles(files: FileList) {
         },
       );
       if (!response.ok)
-        throw new Error(`Загрузка ${file.name}: HTTP ${response.status}`);
+        throw new Error(
+          `${t("uploadFailed")}: ${file.name}, HTTP ${response.status}`,
+        );
       pendingChatAttachments.push((await response.json()) as ChatAttachment);
       renderPendingAttachments();
     }
@@ -948,7 +985,7 @@ function closeMedia() {
   }
   screens.replaceChildren();
   screens.hidden = true;
-  screenButton.textContent = "🖥 Демонстрация экрана";
+  screenButton.textContent = `🖥 ${t("screenShare")}`;
   users.replaceChildren();
   stopSpeaking();
 }
@@ -975,7 +1012,7 @@ async function connect(reconnecting = false, noMicrophone = false) {
     stopMonitor();
     activeServer = selectedServer();
     if (!activeServer) {
-      setSetupError("Сначала добавьте или создайте сервер");
+      setSetupError(t("addOrCreateServer"));
       joining = false;
       updateJoinButton();
       return;
@@ -985,11 +1022,11 @@ async function connect(reconnecting = false, noMicrophone = false) {
     pendingChatAttachments = [];
     renderPendingAttachments();
     uploadState.textContent = "";
-    setSetupError("Проверка локального сервера...");
+    setSetupError(t("checkingLocalServer"));
     localSignaling = await probeLocalSignaling();
   } else teardown("Reconnecting");
   try {
-    if (!activeServer) throw new Error("Сервер не выбран");
+    if (!activeServer) throw new Error(t("serverNotSelected"));
     const signalingUrl = websocketUrl(activeServer, localSignaling);
     const ws = new WebSocket(signalingUrl);
     socket = ws;
@@ -1022,11 +1059,11 @@ async function connect(reconnecting = false, noMicrophone = false) {
       };
       ws.onerror = () => reject(new Error("WebSocket connection failed"));
     });
-    setSetupError("Вход в комнату...");
+    setSetupError(t("enteringRoom"));
     const joined = await request("join", { name }).then(ensureOk);
     const joinedName = String(joined.name ?? name);
     ownPeerId = String(joined.peerId ?? "");
-    setSetupError("Загрузка аудиосистемы...");
+    setSetupError(t("loadingAudio"));
     const caps = await request("getRouterRtpCapabilities").then(ensureOk);
     device = new Device();
     await device.load({
@@ -1043,7 +1080,7 @@ async function connect(reconnecting = false, noMicrophone = false) {
     showRoom(true);
     setConnection("online");
     if (!noMicrophone) {
-      setSetupError("Подключение микрофона...");
+      setSetupError(t("connectingMicrophone"));
       if (noiseMode === "ai")
         try {
           outgoingAi = await createAiAudio();
@@ -1064,7 +1101,7 @@ async function connect(reconnecting = false, noMicrophone = false) {
         autoGainControl: microphoneSettings.autoGainControl,
         channelCount: microphoneSettings.channelCount,
       });
-      setSetupError("Подключение аудиоканала...");
+      setSetupError(t("connectingAudio"));
       const producerPromise = withTimeout(
         sendTransport!.produce({ track: outgoingTrack! }),
         "sendTransport.produce",
@@ -1102,7 +1139,7 @@ async function connect(reconnecting = false, noMicrophone = false) {
     if (reconnecting) scheduleReconnect();
     else
       setSetupError(
-        error instanceof Error ? error.message : "Не удалось подключиться",
+        error instanceof Error ? error.message : t("connectionFailed"),
       );
   } finally {
     joining = false;
@@ -1371,7 +1408,11 @@ async function openScreen(peerId: string) {
       },
     ),
   );
-  const title = `Экран: ${ownScreen ? nameInput.value.trim() : (knownUsers.get(peerId)?.name ?? "участник")}`;
+  const title = t("screenTitle", {
+    name: ownScreen
+      ? nameInput.value.trim()
+      : (knownUsers.get(peerId)?.name ?? t("participant")),
+  });
   screenWindow = new WebviewWindow(`screen-${eventKey}`, {
     url: `index.html?screenViewer=1&eventKey=${encodeURIComponent(eventKey)}&title=${encodeURIComponent(title)}`,
     title,
@@ -1410,7 +1451,7 @@ function renderUser(u: User) {
   item.dataset.peer = u.peerId;
   const self = u.peerId === "self";
   item.classList.toggle("self", self);
-  item.innerHTML = `<span class="avatar">${initials(u.name)}</span><div class="participant-info"><span class="participant-name"></span><label class="participant-volume" ${self ? "hidden" : ""}><span>🔊</span><input type="range" min="0" max="100" step="5" value="100" aria-label="Громкость участника" /><output>100%</output></label></div><button class="screen-icon" type="button" aria-label="Открыть демонстрацию" hidden></button>`;
+  item.innerHTML = `<span class="avatar">${initials(u.name)}</span><div class="participant-info"><span class="participant-name"></span><label class="participant-volume" ${self ? "hidden" : ""}><span>🔊</span><input type="range" min="0" max="100" step="5" value="100" aria-label="${t("participantVolume")}" /><output>100%</output></label></div><button class="screen-icon" type="button" aria-label="${t("openScreen")}" hidden></button>`;
   item.querySelector(".participant-name")!.textContent = u.name;
   if (!self) {
     const slider = item.querySelector<HTMLInputElement>(
@@ -1493,7 +1534,7 @@ screenButton.onclick = async () => {
     screenProducer = undefined;
     screenStream = undefined;
     screenQualitySelect.disabled = false;
-    screenButton.textContent = "🖥 Демонстрация экрана";
+    screenButton.textContent = `🖥 ${t("screenShare")}`;
     return;
   }
   try {
@@ -1543,7 +1584,7 @@ screenButton.onclick = async () => {
       profile,
       track.getSettings(),
     );
-    screenButton.textContent = "■ Остановить демонстрацию";
+    screenButton.textContent = `■ ${t("stopScreenShare")}`;
     track.onended = () => {
       const producerId = screenProducer?.id;
       if (producerId)
@@ -1554,7 +1595,7 @@ screenButton.onclick = async () => {
       updateScreenIndicator("self", false);
       if (screenWindowPeerId === "self") void closeScreenViewer();
       screenQualitySelect.disabled = false;
-      screenButton.textContent = "🖥 Демонстрация экрана";
+      screenButton.textContent = `🖥 ${t("screenShare")}`;
     };
   } catch (error) {
     screenStream?.getTracks().forEach((t) => t.stop());
@@ -1600,11 +1641,11 @@ async function checkForUpdate() {
       return;
     }
     updateButton.hidden = false;
-    updateButton.textContent = "Обновить";
+    updateButton.textContent = t("update");
     joinButton.classList.add("has-update");
     updateButton.onclick = async () => {
       updateButton.disabled = true;
-      updateButton.textContent = "Обновление...";
+      updateButton.textContent = t("updating");
       await update.downloadAndInstall();
       await relaunch();
     };
@@ -1705,7 +1746,7 @@ function createRecvTransport(m: ServerMessage) {
 
 const viewerParams = new URLSearchParams(location.search);
 if (viewerParams.get("screenViewer") === "1") {
-  app.innerHTML = `<div class="standalone-screen"><header>📺 ${viewerParams.get("title") ?? "Демонстрация экрана"}</header><video autoplay playsinline></video></div>`;
+  app.innerHTML = `<div class="standalone-screen"><header>📺 ${viewerParams.get("title") ?? t("screenShare")}</header><video autoplay playsinline></video></div>`;
   void (async () => {
     const eventKey = viewerParams.get("eventKey") ?? "screen";
     const viewerVideo = app.querySelector("video") as HTMLVideoElement;

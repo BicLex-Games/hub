@@ -1,3 +1,5 @@
+import { t } from "./i18n";
+
 export type HubServer = {
   id: string;
   name: string;
@@ -44,10 +46,7 @@ export function loadServers(): HubServer[] {
 }
 
 export function saveServers(servers: HubServer[]) {
-  localStorage.setItem(
-    SERVERS_KEY,
-    JSON.stringify(servers),
-  );
+  localStorage.setItem(SERVERS_KEY, JSON.stringify(servers));
 }
 
 export function selectedServer(): HubServer | undefined {
@@ -61,7 +60,7 @@ export function selectServer(id: string) {
 }
 
 export function uniqueServerName(requested: string, servers = loadServers()) {
-  const base = requested.trim() || "Без названия";
+  const base = requested.trim() || t("untitled");
   if (
     !servers.some(
       (item) => item.name.toLocaleLowerCase() === base.toLocaleLowerCase(),
@@ -88,7 +87,7 @@ export function parseConnectionCode(code: string) {
   const parts = code.trim().split("|");
   const [kind, version] = parts;
   if (!["BicLex-Hub", "BICLEX-HUB"].includes(kind))
-    throw new Error("Некорректный код подключения");
+    throw new Error(t("invalidConnectionCode"));
   let encodedName = "";
   let encodedAddress = "";
   let encodedToken = "";
@@ -97,14 +96,14 @@ export function parseConnectionCode(code: string) {
   } else if (version === "1" && parts.length === 4) {
     [, , encodedAddress, encodedToken] = parts;
   } else {
-    throw new Error("Неподдерживаемая версия кода подключения");
+    throw new Error(t("unsupportedConnectionCode"));
   }
   if (!encodedAddress || !encodedToken)
-    throw new Error("Некорректный код подключения");
+    throw new Error(t("invalidConnectionCode"));
   const address = normalizeAddress(decodeURIComponent(encodedAddress));
   const token = decodeURIComponent(encodedToken).trim();
-  const name = decodeURIComponent(encodedName).trim() || "Без названия";
-  if (!token) throw new Error("В коде отсутствует токен комнаты");
+  const name = decodeURIComponent(encodedName).trim() || t("untitled");
+  if (!token) throw new Error(t("missingRoomToken"));
   return { name, address, token };
 }
 

@@ -303,6 +303,7 @@ button:disabled {
   gap: 15px;
 }
 .chat-pane {
+  position: relative;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto auto;
   min-width: 0;
@@ -394,7 +395,12 @@ button:disabled {
   border-radius: 9px;
   color: #cbe3ff;
   background: #0d192b;
+  cursor: pointer;
   text-decoration: none;
+}
+.message-attachments a:hover {
+  border-color: #4c78ae;
+  background: #13233a;
 }
 .message-attachments img {
   display: block;
@@ -402,6 +408,18 @@ button:disabled {
   max-height: 320px;
   object-fit: contain;
   background: #060b13;
+}
+.message-attachments img.loading {
+  min-height: 130px;
+  opacity: 0.55;
+  background: linear-gradient(110deg, #09111e 25%, #162944 45%, #09111e 65%);
+  background-size: 220% 100%;
+  animation: attachment-loading 1.25s linear infinite;
+}
+@keyframes attachment-loading {
+  to {
+    background-position-x: -220%;
+  }
 }
 .message-attachments span {
   padding: 7px 9px;
@@ -426,6 +444,31 @@ button:disabled {
   color: #cfe2ff;
   background: #263c5d;
   font-size: 0.72rem;
+}
+.chat-drop-overlay {
+  position: absolute;
+  z-index: 20;
+  inset: 10px;
+  display: none;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+  border: 2px dashed #63a8ff;
+  border-radius: 13px;
+  color: #e8f4ff;
+  background: #0b1b31ee;
+  pointer-events: none;
+}
+.chat-drop-overlay span {
+  color: #75b5ff;
+  font-size: 3rem;
+  line-height: 1;
+}
+.chat-drop-overlay strong {
+  font-size: 1rem;
+}
+.chat-pane.dragging .chat-drop-overlay {
+  display: grid;
 }
 #chat-form {
   display: grid;

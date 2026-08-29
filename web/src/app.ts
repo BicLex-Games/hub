@@ -23,7 +23,7 @@ import { getLanguage, setLanguage, t, type Language } from "./i18n";
 import "./style.css";
 import "./update.css";
 
-const CLIENT_VERSION = "0.3.1";
+const CLIENT_VERSION = "0.3.2";
 
 type Request = { requestId: string; type: string; [key: string]: unknown };
 type ServerMessage = {
@@ -414,18 +414,25 @@ async function setNoiseMode(mode: NoiseMode) {
     );
   }
 }
-function constraints(mode: "off" | "standard"): MediaTrackConstraints {
-  const raw = mode === "off";
+type MicrophoneCaptureProfile = "off" | "ai" | "standard";
+
+function constraints(mode: MicrophoneCaptureProfile): MediaTrackConstraints {
+  const browserProcessing = mode === "standard";
   return {
     deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
-    echoCancellation: !raw,
-    noiseSuppression: !raw,
-    autoGainControl: !raw,
+    // Acoustic echo cancellation must remain enabled even when noise
+    // suppression is Off. Otherwise sound from the selected output device is
+    // captured by the microphone and sent back to the other participants.
+    echoCancellation: true,
+    // AI uses GTCRN, so WebView noise suppression and gain control stay off to
+    // avoid processing the same signal twice and producing robotic speech.
+    noiseSuppression: browserProcessing,
+    autoGainControl: browserProcessing,
     channelCount: 1,
     sampleRate: 48_000,
   };
 }
-async function captureDirect(mode: "off" | "standard") {
+async function captureDirect(mode: MicrophoneCaptureProfile) {
   try {
     return await withTimeout(
       navigator.mediaDevices.getUserMedia({
@@ -526,7 +533,7 @@ function closeAi(value: AiAudio | undefined) {
   void value.context.close();
 }
 async function createAiAudio(): Promise<AiAudio> {
-  const input = await captureDirect("off"),
+  const input = await captureDirect("ai"),
     inputTrack = input.getAudioTracks()[0],
     context = new AudioContext({
       sampleRate: 48_000,

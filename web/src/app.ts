@@ -20,6 +20,7 @@ import {
 } from "./servers";
 import { mountServerSettings } from "./server-settings";
 import { getLanguage, setLanguage, t, type Language } from "./i18n";
+import { createEventSound, type EventSound } from "./event-sounds";
 import "./style.css";
 import "./update.css";
 
@@ -213,6 +214,7 @@ let activeServer: HubServer | undefined = selectedServer();
 let pendingChatAttachments: ChatAttachment[] = [];
 let screenWindow: WebviewWindow | undefined;
 let screenWindowPeerId = "";
+let ownScreenSoundActive = false;
 let screenRtc: RTCPeerConnection | undefined;
 let screenEventCleanup: UnlistenFn[] = [];
 versionButton.textContent = t("clientVersion", { version: CLIENT_VERSION });
@@ -251,6 +253,7 @@ const pending = new Map<
   remoteScreens = new Map<string, RemoteScreen>(),
   audioSubscriptions = new Set<string>(),
   screenSubscriptions = new Set<string>(),
+  activeEventSounds = new Set<HTMLAudioElement>(),
   knownUsers = new Map<string, User>(),
   producerPeers = new Map<string, string>(),
   screenProducerPeers = new Map<string, string>(),
@@ -524,6 +527,30 @@ async function applyAudioOutput(audio: HTMLMediaElement) {
       error instanceof Error ? error.message : String(error),
     );
   }
+}
+async function playEventSound(cue: EventSound) {
+  const audio = createEventSound(cue);
+  activeEventSounds.add(audio);
+  const release = () => activeEventSounds.delete(audio);
+  audio.addEventListener("ended", release, { once: true });
+  audio.addEventListener("error", release, { once: true });
+  try {
+    await applyAudioOutput(audio);
+    await audio.play();
+    diagnosticLog("EVENT SOUND", cue);
+  } catch (error) {
+    release();
+    diagnosticLog(
+      "EVENT SOUND FAILED",
+      cue,
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+}
+function playOwnScreenStoppedSound() {
+  if (!ownScreenSoundActive) return;
+  ownScreenSoundActive = false;
+  void playEventSound("screenStopped");
 }
 function closeAi(value: AiAudio | undefined) {
   if (!value) return;
@@ -971,6 +998,7 @@ function closeMedia() {
   screenProducerPeers.clear();
   audioSubscriptions.clear();
   screenSubscriptions.clear();
+  ownScreenSoundActive = false;
   screenProducer?.close();
   screenStream?.getTracks().forEach((t) => t.stop());
   screenProducer = undefined;
@@ -1174,6 +1202,7 @@ async function handleEvent(m: ServerMessage) {
     const u = { peerId: String(m.peerId), name: String(m.name) };
     knownUsers.set(u.peerId, u);
     renderUser(u);
+    void playEventSound("participantJoined");
   }
   if (m.type === "userLeft") {
     const peer = String(m.peerId);
@@ -1181,13 +1210,18 @@ async function handleEvent(m: ServerMessage) {
       if (owner === peer) removeRemote(id);
     knownUsers.delete(peer);
     removeUser(peer);
+    void playEventSound("participantLeft");
   }
   if (m.type === "producerClosed") removeRemote(String(m.producerId));
-  if (m.type === "screenProducerStopped") removeScreen(String(m.producerId));
+  if (m.type === "screenProducerStopped") {
+    removeScreen(String(m.producerId));
+    void playEventSound("screenStopped");
+  }
   if (m.type === "screenProducerStarted") {
     const peerId = String(m.peerId),
       producerId = String(m.producerId);
     screenProducerPeers.set(producerId, peerId);
+    void playEventSound("screenStarted");
     if (recvTransport) await subscribeScreen(peerId, producerId);
     updateScreenIndicator(peerId, true);
   }
@@ -1537,6 +1571,7 @@ screenButton.onclick = async () => {
     screenProducer.close();
     updateScreenIndicator("self", false);
     if (screenWindowPeerId === "self") void closeScreenViewer();
+    playOwnScreenStoppedSound();
     screenStream?.getTracks().forEach((t) => t.stop());
     screenProducer = undefined;
     screenStream = undefined;
@@ -1585,6 +1620,8 @@ screenButton.onclick = async () => {
     }
     screenQualitySelect.disabled = true;
     updateScreenIndicator("self", true);
+    ownScreenSoundActive = true;
+    void playEventSound("screenStarted");
     diagnosticLog(
       "SCREEN QUALITY",
       screenQuality,
@@ -1603,6 +1640,7 @@ screenButton.onclick = async () => {
       if (screenWindowPeerId === "self") void closeScreenViewer();
       screenQualitySelect.disabled = false;
       screenButton.textContent = `🖥 ${t("screenShare")}`;
+      playOwnScreenStoppedSound();
     };
   } catch (error) {
     screenStream?.getTracks().forEach((t) => t.stop());

@@ -340,7 +340,7 @@ function showRoom(show: boolean) {
   serverSelect.disabled = show;
   serverSettingsButton.disabled = show;
   chatServerName.textContent = activeServer?.name ?? "";
-  const size = show ? new LogicalSize(1560, 760) : new LogicalSize(760, 680);
+  const size = show ? new LogicalSize(1560, 760) : new LogicalSize(760, 760);
   if (isTauri)
     void getCurrentWindow()
       .setSize(size)

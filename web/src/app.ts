@@ -24,7 +24,7 @@ import { createEventSound, type EventSound } from "./event-sounds";
 import "./style.css";
 import "./update.css";
 
-const CLIENT_VERSION = "0.3.2";
+const CLIENT_VERSION = "0.3.3";
 
 type Request = { requestId: string; type: string; [key: string]: unknown };
 type ServerMessage = {

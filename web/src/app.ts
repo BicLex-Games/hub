@@ -25,7 +25,7 @@ import { createEventSound, type EventSound } from "./event-sounds";
 import "./style.css";
 import "./update.css";
 
-const CLIENT_VERSION = "0.3.13";
+const CLIENT_VERSION = "0.3.14";
 
 type Request = { requestId: string; type: string; [key: string]: unknown };
 type ServerMessage = {
@@ -334,8 +334,11 @@ function setConnection(state: "online" | "reconnecting") {
     state === "online" ? t("online") : t("reconnecting");
   connectionState.classList.toggle("reconnecting", state === "reconnecting");
 }
-async function resizeMainWindow(size: LogicalSize, center = false) {
-  if (!isTauri) return;
+async function resizeMainWindow(
+  size: LogicalSize,
+  center = false,
+): Promise<number | null> {
+  if (!isTauri) return null;
   const window = getCurrentWindow();
   try {
     await window.setSize(size);
@@ -343,15 +346,21 @@ async function resizeMainWindow(size: LogicalSize, center = false) {
     await window.setSize(size);
     if (center) await window.center();
     const actual = await window.outerSize();
+    const scaleFactor = await window.scaleFactor();
+    const actualLogicalWidth = actual.width / scaleFactor;
     diagnosticLog("WINDOW SIZE", {
       requested: { width: size.width, height: size.height },
       actual: { width: actual.width, height: actual.height },
+      scaleFactor,
+      actualLogicalWidth,
     });
+    return actualLogicalWidth;
   } catch (error) {
     diagnosticLog(
       "WINDOW RESIZE FAILED",
       error instanceof Error ? error.message : String(error),
     );
+    return null;
   }
 }
 function showRoom(show: boolean) {
@@ -366,7 +375,13 @@ function showRoom(show: boolean) {
   serverSettingsButton.disabled = show;
   chatServerName.textContent = activeServer?.name ?? "";
   const size = show ? new LogicalSize(1560, 760) : new LogicalSize(760, 760);
-  void resizeMainWindow(size, show);
+  roomPage.classList.remove("room-wide");
+  void resizeMainWindow(size, show).then((actualLogicalWidth) => {
+    roomPage.classList.toggle(
+      "room-wide",
+      show && actualLogicalWidth !== null && actualLogicalWidth >= 1200,
+    );
+  });
 }
 function updateJoinButton() {
   joinButton.disabled = !nameInput.value.trim() || !activeServer || joining;

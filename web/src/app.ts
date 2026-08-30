@@ -96,6 +96,7 @@ type AiAudio = {
   outputTrack: MediaStreamTrack;
   context: AudioContext;
   node: GtcrnWorkletNode;
+  monoOutput: ChannelMergerNode;
 };
 type RemoteAudio = {
   audio: HTMLAudioElement;
@@ -561,6 +562,7 @@ function closeAi(value: AiAudio | undefined) {
   if (!value) return;
   value.node.destroy();
   value.node.disconnect();
+  value.monoOutput.disconnect();
   value.input.getTracks().forEach((t) => t.stop());
   void value.context.close();
 }
@@ -596,13 +598,18 @@ async function createAiAudio(): Promise<AiAudio> {
     const wasmBinary = await loadGtcrn({ url: gtcrnWasmPath });
     await context.audioWorklet.addModule(gtcrnWorkletPath);
     const node = new GtcrnWorkletNode(context, { wasmBinary, maxChannels: 1 });
+    const monoOutput = context.createChannelMerger(1);
     node.channelCount = 1;
     node.channelCountMode = "explicit";
     node.channelInterpretation = "speakers";
-    source.connect(node).connect(destination);
+    monoOutput.channelCount = 1;
+    monoOutput.channelCountMode = "explicit";
+    monoOutput.channelInterpretation = "speakers";
+    source.connect(node).connect(monoOutput).connect(destination);
     const outputTrack = destination.stream.getAudioTracks()[0];
     if (!outputTrack) throw new Error("AI output track unavailable");
-    return { input, inputTrack, outputTrack, context, node };
+    diagnosticLog("AI OUTPUT SETTINGS", outputTrack.getSettings());
+    return { input, inputTrack, outputTrack, context, node, monoOutput };
   } catch (error) {
     source.disconnect();
     input.getTracks().forEach((t) => t.stop());
@@ -1331,7 +1338,12 @@ async function handleEvent(m: ServerMessage) {
     for (const message of m.messages as ChatMessage[])
       renderChatMessage(message);
   }
-  if (m.type === "chatMessage") renderChatMessage(m.message as ChatMessage);
+  if (m.type === "chatMessage") {
+    const message = m.message as ChatMessage;
+    renderChatMessage(message);
+    if (message.senderPeerId !== ownPeerId)
+      void playEventSound("messageReceived");
+  }
   if (m.type === "users")
     for (const u of m.users as User[]) {
       knownUsers.set(u.peerId, u);

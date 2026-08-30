@@ -118,7 +118,10 @@ export function websocketUrl(server: HubServer, local = false) {
 }
 
 export function authenticatedUrl(server: HubServer, path: string) {
-  const url = new URL(path, `${server.address}/`);
+  const serverUrl = new URL(`${server.address}/`);
+  const url = new URL(path, serverUrl);
+  if (url.origin !== serverUrl.origin)
+    throw new Error("Cross-origin server resource is not allowed");
   if (server.token) url.searchParams.set("token", server.token);
   return url.toString();
 }

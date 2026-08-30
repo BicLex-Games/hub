@@ -24,7 +24,7 @@ import { createEventSound, type EventSound } from "./event-sounds";
 import "./style.css";
 import "./update.css";
 
-const CLIENT_VERSION = "0.3.3";
+const CLIENT_VERSION = "0.3.4";
 
 type Request = { requestId: string; type: string; [key: string]: unknown };
 type ServerMessage = {
@@ -197,7 +197,7 @@ conferencePane.className = "conference-pane";
 conferencePane.append(roomHeader, roomMain, roomBottom);
 const chatPane = document.createElement("section");
 chatPane.className = "chat-pane";
-chatPane.innerHTML = `<header><div><h2>${t("chat")}</h2><span id="chat-server-name"></span></div><span id="upload-state"></span></header><div id="chat-messages" class="chat-messages"></div><div id="chat-attachments" class="chat-attachments"></div><form id="chat-form"><button id="attach-file" type="button" title="${t("addFile")}">＋</button><textarea id="chat-input" rows="1" maxlength="4000" placeholder="${t("messagePlaceholder")}"></textarea><button id="send-chat" type="submit">${t("send")}</button><input id="file-input" type="file" multiple hidden /></form>`;
+chatPane.innerHTML = `<header><div><h2>${t("chat")}</h2><span id="chat-server-name"></span></div><span id="upload-state"></span></header><div id="chat-messages" class="chat-messages"></div><div id="chat-attachments" class="chat-attachments"></div><form id="chat-form"><button id="attach-file" type="button" title="${t("addFile")}">＋</button><textarea id="chat-input" rows="1" maxlength="4000" placeholder="${t("messagePlaceholder")}"></textarea><button id="send-chat" type="submit">${t("send")}</button><input id="file-input" type="file" multiple hidden /></form><div id="chat-drop-overlay" class="chat-drop-overlay" aria-hidden="true"><span>⇩</span><strong>${t("dropFilesHere")}</strong></div>`;
 roomPage.append(conferencePane, chatPane);
 const chatMessages = chatPane.querySelector<HTMLElement>("#chat-messages")!;
 const chatServerName =
@@ -210,8 +210,12 @@ const attachFileButton =
   chatPane.querySelector<HTMLButtonElement>("#attach-file")!;
 const chatAttachments =
   chatPane.querySelector<HTMLElement>("#chat-attachments")!;
+const chatDropOverlay =
+  chatPane.querySelector<HTMLElement>("#chat-drop-overlay")!;
 let activeServer: HubServer | undefined = selectedServer();
 let pendingChatAttachments: ChatAttachment[] = [];
+let chatDragDepth = 0;
+let fileUploadQueue = Promise.resolve();
 let screenWindow: WebviewWindow | undefined;
 let screenWindowPeerId = "";
 let ownScreenSoundActive = false;
@@ -723,6 +727,65 @@ function fileSize(size: number) {
 function attachmentUrl(attachment: ChatAttachment) {
   return authenticatedUrl(effectiveServer(), attachment.url);
 }
+async function fetchAttachment(attachment: ChatAttachment) {
+  const response = await fetch(attachmentUrl(attachment));
+  if (!response.ok)
+    throw new Error(`${attachment.name}, HTTP ${response.status}`);
+  return response.blob();
+}
+async function loadImagePreview(
+  image: HTMLImageElement,
+  attachment: ChatAttachment,
+) {
+  try {
+    const blob = await fetchAttachment(attachment);
+    if (!blob.type.startsWith("image/")) throw new Error("not an image");
+    const url = URL.createObjectURL(blob);
+    image.onload = () => {
+      image.classList.remove("loading");
+      URL.revokeObjectURL(url);
+    };
+    image.onerror = () => {
+      image.hidden = true;
+      URL.revokeObjectURL(url);
+    };
+    image.src = url;
+  } catch {
+    image.hidden = true;
+  }
+}
+async function downloadAttachment(attachment: ChatAttachment) {
+  uploadState.textContent = t("downloading", { name: attachment.name });
+  try {
+    const url = attachmentUrl(attachment);
+    if (isTauri) {
+      await invoke("download_attachment", {
+        url,
+        filename: attachment.name,
+      });
+      uploadState.textContent = t("downloaded", { name: attachment.name });
+      return;
+    }
+    const blob = await fetchAttachment(attachment);
+    const blobUrl = URL.createObjectURL(blob);
+    const download = document.createElement("a");
+    download.href = blobUrl;
+    download.download = attachment.name;
+    download.hidden = true;
+    document.body.append(download);
+    download.click();
+    download.remove();
+    window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+    uploadState.textContent = t("downloaded", { name: attachment.name });
+  } catch (error) {
+    diagnosticLog(
+      "ATTACHMENT DOWNLOAD FAILED",
+      attachment.id,
+      error instanceof Error ? error.message : String(error),
+    );
+    uploadState.textContent = t("downloadFailed", { name: attachment.name });
+  }
+}
 function renderChatMessage(message: ChatMessage) {
   if (renderedChatMessages.has(message.id)) return;
   renderedChatMessages.add(message.id);
@@ -757,17 +820,21 @@ function renderChatMessage(message: ChatMessage) {
     for (const attachment of message.attachments) {
       const link = document.createElement("a");
       link.href = attachmentUrl(attachment);
-      link.target = "_blank";
-      link.rel = "noreferrer";
+      link.download = attachment.name;
+      link.onclick = (event) => {
+        event.preventDefault();
+        void downloadAttachment(attachment);
+      };
       if (attachment.mime.startsWith("image/")) {
         const image = document.createElement("img");
-        image.src = link.href;
         image.alt = attachment.name;
         image.loading = "lazy";
+        image.className = "loading";
         link.append(image);
+        void loadImagePreview(image, attachment);
       }
       const label = document.createElement("span");
-      label.textContent = `${attachment.name} · ${fileSize(attachment.size)}`;
+      label.textContent = `⇩ ${attachment.name} · ${fileSize(attachment.size)}`;
       link.append(label);
       attachments.append(link);
     }
@@ -791,11 +858,11 @@ function renderPendingAttachments() {
     chatAttachments.append(chip);
   }
 }
-async function uploadChatFiles(files: FileList) {
+async function uploadChatFiles(files: readonly File[]) {
   uploadState.textContent = t("uploading");
   attachFileButton.disabled = true;
   try {
-    for (const file of [...files]) {
+    for (const file of files) {
       const body = new FormData();
       body.append("file", file, file.name);
       const response = await fetch(
@@ -821,9 +888,46 @@ async function uploadChatFiles(files: FileList) {
     fileInput.value = "";
   }
 }
+function queueChatFiles(files: FileList | readonly File[]) {
+  const selectedFiles = Array.from(files);
+  if (!selectedFiles.length) return;
+  fileUploadQueue = fileUploadQueue.then(() => uploadChatFiles(selectedFiles));
+}
+function setChatDragging(dragging: boolean) {
+  chatPane.classList.toggle("dragging", dragging);
+  chatDropOverlay.setAttribute("aria-hidden", String(!dragging));
+}
+function containsDraggedFiles(event: DragEvent) {
+  return Array.from(event.dataTransfer?.types ?? []).includes("Files");
+}
 attachFileButton.onclick = () => fileInput.click();
 fileInput.onchange = () => {
-  if (fileInput.files?.length) void uploadChatFiles(fileInput.files);
+  if (fileInput.files?.length) queueChatFiles(fileInput.files);
+};
+chatPane.ondragenter = (event) => {
+  if (!containsDraggedFiles(event)) return;
+  event.preventDefault();
+  chatDragDepth += 1;
+  setChatDragging(true);
+};
+chatPane.ondragover = (event) => {
+  if (!containsDraggedFiles(event)) return;
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+};
+chatPane.ondragleave = (event) => {
+  if (!containsDraggedFiles(event)) return;
+  event.preventDefault();
+  chatDragDepth = Math.max(0, chatDragDepth - 1);
+  if (!chatDragDepth) setChatDragging(false);
+};
+chatPane.ondrop = (event) => {
+  if (!containsDraggedFiles(event)) return;
+  event.preventDefault();
+  chatDragDepth = 0;
+  setChatDragging(false);
+  if (event.dataTransfer?.files.length)
+    queueChatFiles(event.dataTransfer.files);
 };
 chatForm.onsubmit = (event) => {
   event.preventDefault();

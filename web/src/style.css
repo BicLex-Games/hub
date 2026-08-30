@@ -347,6 +347,7 @@ button:disabled {
   gap: 9px;
   padding: 15px 17px;
   overflow-y: auto;
+  scroll-behavior: smooth;
   scrollbar-color: #30486b transparent;
 }
 .chat-message {

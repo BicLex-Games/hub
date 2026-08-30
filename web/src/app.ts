@@ -743,20 +743,52 @@ async function fetchAttachment(attachment: ChatAttachment) {
     throw new Error(`${attachment.name}, HTTP ${response.status}`);
   return response.blob();
 }
-function openImagePreview(attachment: ChatAttachment) {
+function imageDimensions(src: string) {
+  return new Promise<{ width: number; height: number }>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => {
+      if (!image.naturalWidth || !image.naturalHeight) {
+        reject(new Error("Image has no dimensions"));
+        return;
+      }
+      resolve({ width: image.naturalWidth, height: image.naturalHeight });
+    };
+    image.onerror = () => reject(new Error("Image preview load failed"));
+    image.src = src;
+  });
+}
+function previewWindowSize(width: number, height: number) {
+  const maxWidth = Math.max(320, Math.floor(window.screen.availWidth * 0.92));
+  const maxHeight = Math.max(240, Math.floor(window.screen.availHeight * 0.9));
+  const scale = Math.min(1, maxWidth / width, maxHeight / height);
+  return {
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale)),
+  };
+}
+async function openImagePreview(attachment: ChatAttachment) {
   const src = attachmentUrl(attachment);
   if (!isTauri) {
     window.open(src, "_blank", "noopener,noreferrer");
     return;
   }
+  let size = { width: 960, height: 720 };
+  try {
+    const dimensions = await imageDimensions(src);
+    size = previewWindowSize(dimensions.width, dimensions.height);
+  } catch (error) {
+    diagnosticLog(
+      "IMAGE PREVIEW DIMENSIONS FAILED",
+      attachment.id,
+      error instanceof Error ? error.message : String(error),
+    );
+  }
   const key = attachment.id.replace(/[^a-zA-Z0-9_-]/g, "");
   const preview = new WebviewWindow(`image-preview-${key}-${Date.now()}`, {
     url: `index.html?imagePreview=1&src=${encodeURIComponent(src)}&title=${encodeURIComponent(attachment.name)}`,
     title: attachment.name,
-    width: 960,
-    height: 720,
-    minWidth: 420,
-    minHeight: 320,
+    width: size.width,
+    height: size.height,
     resizable: true,
     center: true,
   });
@@ -800,6 +832,19 @@ async function downloadAttachment(attachment: ChatAttachment) {
     );
     uploadState.textContent = t("downloadFailed", { name: attachment.name });
   }
+}
+function scrollChatToBottom(behavior: ScrollBehavior = "smooth") {
+  requestAnimationFrame(() => {
+    chatMessages.scrollTo({
+      top: chatMessages.scrollHeight,
+      behavior,
+    });
+    // A second layout pass is needed when a new image attachment finishes
+    // loading and increases the message height after the first scroll.
+    requestAnimationFrame(() => {
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+    });
+  });
 }
 function renderChatMessage(message: ChatMessage) {
   if (renderedChatMessages.has(message.id)) return;
@@ -845,6 +890,9 @@ function renderChatMessage(message: ChatMessage) {
         image.src = link.href;
         image.alt = attachment.name;
         image.loading = "lazy";
+        image.addEventListener("load", () => scrollChatToBottom("auto"), {
+          once: true,
+        });
         link.append(image);
       }
       const label = document.createElement("span");
@@ -855,7 +903,7 @@ function renderChatMessage(message: ChatMessage) {
     item.append(attachments);
   }
   chatMessages.append(item);
-  chatMessages.scrollTop = chatMessages.scrollHeight;
+  scrollChatToBottom();
 }
 function renderPendingAttachments() {
   chatAttachments.replaceChildren();

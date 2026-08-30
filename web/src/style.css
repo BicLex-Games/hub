@@ -160,9 +160,12 @@ button:disabled {
 }
 .room-page {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 3fr);
+  grid-template-columns: minmax(300px, 1fr) minmax(0, 2fr);
   padding: 14px;
   gap: 14px;
+}
+.room-page.room-wide {
+  grid-template-columns: minmax(320px, 1fr) minmax(0, 3fr);
 }
 .conference-pane {
   display: flex;
@@ -618,7 +621,7 @@ button:disabled {
 }
 @media (max-width: 1050px) {
   .room-page {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 3fr);
+    grid-template-columns: minmax(300px, 1fr) minmax(0, 2fr);
   }
   .chat-message {
     width: 92%;

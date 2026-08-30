@@ -25,7 +25,7 @@ import { createEventSound, type EventSound } from "./event-sounds";
 import "./style.css";
 import "./update.css";
 
-const CLIENT_VERSION = "0.3.9";
+const CLIENT_VERSION = "0.3.10";
 
 type Request = { requestId: string; type: string; [key: string]: unknown };
 type ServerMessage = {
@@ -428,10 +428,10 @@ function constraints(mode: MicrophoneCaptureProfile): MediaTrackConstraints {
   const browserProcessing = mode === "standard";
   return {
     deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
-    // Acoustic echo cancellation must remain enabled even when noise
-    // suppression is Off. Otherwise sound from the selected output device is
-    // captured by the microphone and sent back to the other participants.
-    echoCancellation: true,
+    // WebView's AEC can interact badly with GTCRN on some microphones and
+    // produce pumping/robotic speech. Keep AEC for direct modes, but feed AI
+    // the raw capture path so GTCRN is the only microphone processor.
+    echoCancellation: mode !== "ai",
     // AI uses GTCRN, so WebView noise suppression and gain control stay off to
     // avoid processing the same signal twice and producing robotic speech.
     noiseSuppression: browserProcessing,

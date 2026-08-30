@@ -25,7 +25,7 @@ import { createEventSound, type EventSound } from "./event-sounds";
 import "./style.css";
 import "./update.css";
 
-const CLIENT_VERSION = "0.3.7";
+const CLIENT_VERSION = "0.3.8";
 
 type Request = { requestId: string; type: string; [key: string]: unknown };
 type ServerMessage = {
@@ -602,7 +602,6 @@ async function createAiAudio(): Promise<AiAudio> {
     node.channelCount = 1;
     node.channelCountMode = "explicit";
     node.channelInterpretation = "speakers";
-    stereoOutput.channelCount = 2;
     stereoOutput.channelCountMode = "explicit";
     stereoOutput.channelInterpretation = "speakers";
     source.connect(node);

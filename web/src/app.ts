@@ -25,7 +25,7 @@ import { createEventSound, type EventSound } from "./event-sounds";
 import "./style.css";
 import "./update.css";
 
-const CLIENT_VERSION = "0.3.10";
+const CLIENT_VERSION = "0.3.11";
 
 type Request = { requestId: string; type: string; [key: string]: unknown };
 type ServerMessage = {
@@ -258,6 +258,7 @@ const pending = new Map<
   remoteScreens = new Map<string, RemoteScreen>(),
   audioSubscriptions = new Set<string>(),
   screenSubscriptions = new Set<string>(),
+  stoppedScreenProducers = new Set<string>(),
   activeEventSounds = new Set<HTMLAudioElement>(),
   knownUsers = new Map<string, User>(),
   producerPeers = new Map<string, string>(),
@@ -1192,6 +1193,7 @@ function closeMedia() {
   screenProducerPeers.clear();
   audioSubscriptions.clear();
   screenSubscriptions.clear();
+  stoppedScreenProducers.clear();
   ownScreenSoundActive = false;
   screenProducer?.close();
   screenStream?.getTracks().forEach((t) => t.stop());
@@ -1413,12 +1415,15 @@ async function handleEvent(m: ServerMessage) {
   }
   if (m.type === "producerClosed") removeRemote(String(m.producerId));
   if (m.type === "screenProducerStopped") {
-    removeScreen(String(m.producerId));
+    const producerId = String(m.producerId);
+    stoppedScreenProducers.add(producerId);
+    removeScreen(producerId, String(m.peerId));
     void playEventSound("screenStopped");
   }
   if (m.type === "screenProducerStarted") {
     const peerId = String(m.peerId),
       producerId = String(m.producerId);
+    stoppedScreenProducers.delete(producerId);
     screenProducerPeers.set(producerId, peerId);
     void playEventSound("screenStarted");
     if (recvTransport) await subscribeScreen(peerId, producerId);
@@ -1450,6 +1455,7 @@ async function subscribeScreen(peerId: string, producerId: string) {
   if (
     remoteScreens.has(producerId) ||
     screenSubscriptions.has(producerId) ||
+    stoppedScreenProducers.has(producerId) ||
     !recvTransport ||
     !device
   )
@@ -1477,6 +1483,11 @@ async function subscribeScreen(peerId: string, producerId: string) {
     video.playsInline = true;
     video.srcObject = new MediaStream([consumer.track]);
     remoteScreens.set(producerId, { video, consumer, peerId });
+    consumer.track.addEventListener(
+      "ended",
+      () => removeScreen(producerId, peerId),
+      { once: true },
+    );
     updateScreenIndicator(peerId, true);
     await request("resumeConsumer", { consumerId: data.id }).then(ensureOk);
     await video.play().catch(() => undefined);
@@ -1555,9 +1566,9 @@ function removeRemote(id: string) {
   remoteAudio.delete(id);
   producerPeers.delete(id);
 }
-function removeScreen(id: string) {
+function removeScreen(id: string, ownerOverride = "") {
   const i = remoteScreens.get(id);
-  const owner = screenProducerPeers.get(id);
+  const owner = ownerOverride || screenProducerPeers.get(id) || i?.peerId;
   i?.consumer.close();
   i?.video.pause();
   if (i) i.video.srcObject = null;
@@ -1567,6 +1578,7 @@ function removeScreen(id: string) {
     updateScreenIndicator(owner, false);
     if (screenWindowPeerId === owner) void closeScreenViewer();
   }
+  if (!owner && screenWindow) void closeScreenViewer();
 }
 function updateScreenIndicator(peerId: string, active: boolean) {
   const icon = document.querySelector<HTMLButtonElement>(

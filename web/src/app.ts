@@ -25,7 +25,7 @@ import { createEventSound, type EventSound } from "./event-sounds";
 import "./style.css";
 import "./update.css";
 
-const CLIENT_VERSION = "0.3.8";
+const CLIENT_VERSION = "0.3.9";
 
 type Request = { requestId: string; type: string; [key: string]: unknown };
 type ServerMessage = {
@@ -96,7 +96,6 @@ type AiAudio = {
   outputTrack: MediaStreamTrack;
   context: AudioContext;
   node: GtcrnWorkletNode;
-  stereoOutput: ChannelMergerNode;
 };
 type RemoteAudio = {
   audio: HTMLAudioElement;
@@ -562,7 +561,6 @@ function closeAi(value: AiAudio | undefined) {
   if (!value) return;
   value.node.destroy();
   value.node.disconnect();
-  value.stereoOutput.disconnect();
   value.input.getTracks().forEach((t) => t.stop());
   void value.context.close();
 }
@@ -581,7 +579,7 @@ async function createAiAudio(): Promise<AiAudio> {
   source.channelCount = 1;
   source.channelCountMode = "explicit";
   source.channelInterpretation = "speakers";
-  destination.channelCount = 2;
+  destination.channelCount = 1;
   destination.channelCountMode = "explicit";
   destination.channelInterpretation = "speakers";
   diagnosticLog("AI INPUT SETTINGS", inputTrack.getSettings());
@@ -598,20 +596,14 @@ async function createAiAudio(): Promise<AiAudio> {
     const wasmBinary = await loadGtcrn({ url: gtcrnWasmPath });
     await context.audioWorklet.addModule(gtcrnWorkletPath);
     const node = new GtcrnWorkletNode(context, { wasmBinary, maxChannels: 1 });
-    const stereoOutput = context.createChannelMerger(2);
     node.channelCount = 1;
     node.channelCountMode = "explicit";
     node.channelInterpretation = "speakers";
-    stereoOutput.channelCountMode = "explicit";
-    stereoOutput.channelInterpretation = "speakers";
-    source.connect(node);
-    node.connect(stereoOutput, 0, 0);
-    node.connect(stereoOutput, 0, 1);
-    stereoOutput.connect(destination);
+    source.connect(node).connect(destination);
     const outputTrack = destination.stream.getAudioTracks()[0];
     if (!outputTrack) throw new Error("AI output track unavailable");
     diagnosticLog("AI OUTPUT SETTINGS", outputTrack.getSettings());
-    return { input, inputTrack, outputTrack, context, node, stereoOutput };
+    return { input, inputTrack, outputTrack, context, node };
   } catch (error) {
     source.disconnect();
     input.getTracks().forEach((t) => t.stop());

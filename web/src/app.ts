@@ -25,7 +25,7 @@ import { createEventSound, type EventSound } from "./event-sounds";
 import "./style.css";
 import "./update.css";
 
-const CLIENT_VERSION = "0.3.8";
+const CLIENT_VERSION = "0.3.11";
 
 type Request = { requestId: string; type: string; [key: string]: unknown };
 type ServerMessage = {
@@ -96,7 +96,6 @@ type AiAudio = {
   outputTrack: MediaStreamTrack;
   context: AudioContext;
   node: GtcrnWorkletNode;
-  stereoOutput: ChannelMergerNode;
 };
 type RemoteAudio = {
   audio: HTMLAudioElement;
@@ -259,6 +258,7 @@ const pending = new Map<
   remoteScreens = new Map<string, RemoteScreen>(),
   audioSubscriptions = new Set<string>(),
   screenSubscriptions = new Set<string>(),
+  stoppedScreenProducers = new Set<string>(),
   activeEventSounds = new Set<HTMLAudioElement>(),
   knownUsers = new Map<string, User>(),
   producerPeers = new Map<string, string>(),
@@ -429,10 +429,10 @@ function constraints(mode: MicrophoneCaptureProfile): MediaTrackConstraints {
   const browserProcessing = mode === "standard";
   return {
     deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
-    // Acoustic echo cancellation must remain enabled even when noise
-    // suppression is Off. Otherwise sound from the selected output device is
-    // captured by the microphone and sent back to the other participants.
-    echoCancellation: true,
+    // WebView's AEC can interact badly with GTCRN on some microphones and
+    // produce pumping/robotic speech. Keep AEC for direct modes, but feed AI
+    // the raw capture path so GTCRN is the only microphone processor.
+    echoCancellation: mode !== "ai",
     // AI uses GTCRN, so WebView noise suppression and gain control stay off to
     // avoid processing the same signal twice and producing robotic speech.
     noiseSuppression: browserProcessing,
@@ -562,7 +562,6 @@ function closeAi(value: AiAudio | undefined) {
   if (!value) return;
   value.node.destroy();
   value.node.disconnect();
-  value.stereoOutput.disconnect();
   value.input.getTracks().forEach((t) => t.stop());
   void value.context.close();
 }
@@ -581,7 +580,7 @@ async function createAiAudio(): Promise<AiAudio> {
   source.channelCount = 1;
   source.channelCountMode = "explicit";
   source.channelInterpretation = "speakers";
-  destination.channelCount = 2;
+  destination.channelCount = 1;
   destination.channelCountMode = "explicit";
   destination.channelInterpretation = "speakers";
   diagnosticLog("AI INPUT SETTINGS", inputTrack.getSettings());
@@ -598,20 +597,14 @@ async function createAiAudio(): Promise<AiAudio> {
     const wasmBinary = await loadGtcrn({ url: gtcrnWasmPath });
     await context.audioWorklet.addModule(gtcrnWorkletPath);
     const node = new GtcrnWorkletNode(context, { wasmBinary, maxChannels: 1 });
-    const stereoOutput = context.createChannelMerger(2);
     node.channelCount = 1;
     node.channelCountMode = "explicit";
     node.channelInterpretation = "speakers";
-    stereoOutput.channelCountMode = "explicit";
-    stereoOutput.channelInterpretation = "speakers";
-    source.connect(node);
-    node.connect(stereoOutput, 0, 0);
-    node.connect(stereoOutput, 0, 1);
-    stereoOutput.connect(destination);
+    source.connect(node).connect(destination);
     const outputTrack = destination.stream.getAudioTracks()[0];
     if (!outputTrack) throw new Error("AI output track unavailable");
     diagnosticLog("AI OUTPUT SETTINGS", outputTrack.getSettings());
-    return { input, inputTrack, outputTrack, context, node, stereoOutput };
+    return { input, inputTrack, outputTrack, context, node };
   } catch (error) {
     source.disconnect();
     input.getTracks().forEach((t) => t.stop());
@@ -743,20 +736,52 @@ async function fetchAttachment(attachment: ChatAttachment) {
     throw new Error(`${attachment.name}, HTTP ${response.status}`);
   return response.blob();
 }
-function openImagePreview(attachment: ChatAttachment) {
+function imageDimensions(src: string) {
+  return new Promise<{ width: number; height: number }>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => {
+      if (!image.naturalWidth || !image.naturalHeight) {
+        reject(new Error("Image has no dimensions"));
+        return;
+      }
+      resolve({ width: image.naturalWidth, height: image.naturalHeight });
+    };
+    image.onerror = () => reject(new Error("Image preview load failed"));
+    image.src = src;
+  });
+}
+function previewWindowSize(width: number, height: number) {
+  const maxWidth = Math.max(320, Math.floor(window.screen.availWidth * 0.92));
+  const maxHeight = Math.max(240, Math.floor(window.screen.availHeight * 0.9));
+  const scale = Math.min(1, maxWidth / width, maxHeight / height);
+  return {
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale)),
+  };
+}
+async function openImagePreview(attachment: ChatAttachment) {
   const src = attachmentUrl(attachment);
   if (!isTauri) {
     window.open(src, "_blank", "noopener,noreferrer");
     return;
   }
+  let size = { width: 960, height: 720 };
+  try {
+    const dimensions = await imageDimensions(src);
+    size = previewWindowSize(dimensions.width, dimensions.height);
+  } catch (error) {
+    diagnosticLog(
+      "IMAGE PREVIEW DIMENSIONS FAILED",
+      attachment.id,
+      error instanceof Error ? error.message : String(error),
+    );
+  }
   const key = attachment.id.replace(/[^a-zA-Z0-9_-]/g, "");
   const preview = new WebviewWindow(`image-preview-${key}-${Date.now()}`, {
     url: `index.html?imagePreview=1&src=${encodeURIComponent(src)}&title=${encodeURIComponent(attachment.name)}`,
     title: attachment.name,
-    width: 960,
-    height: 720,
-    minWidth: 420,
-    minHeight: 320,
+    width: size.width,
+    height: size.height,
     resizable: true,
     center: true,
   });
@@ -800,6 +825,19 @@ async function downloadAttachment(attachment: ChatAttachment) {
     );
     uploadState.textContent = t("downloadFailed", { name: attachment.name });
   }
+}
+function scrollChatToBottom(behavior: ScrollBehavior = "smooth") {
+  requestAnimationFrame(() => {
+    chatMessages.scrollTo({
+      top: chatMessages.scrollHeight,
+      behavior,
+    });
+    // A second layout pass is needed when a new image attachment finishes
+    // loading and increases the message height after the first scroll.
+    requestAnimationFrame(() => {
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+    });
+  });
 }
 function renderChatMessage(message: ChatMessage) {
   if (renderedChatMessages.has(message.id)) return;
@@ -845,6 +883,9 @@ function renderChatMessage(message: ChatMessage) {
         image.src = link.href;
         image.alt = attachment.name;
         image.loading = "lazy";
+        image.addEventListener("load", () => scrollChatToBottom("auto"), {
+          once: true,
+        });
         link.append(image);
       }
       const label = document.createElement("span");
@@ -855,7 +896,7 @@ function renderChatMessage(message: ChatMessage) {
     item.append(attachments);
   }
   chatMessages.append(item);
-  chatMessages.scrollTop = chatMessages.scrollHeight;
+  scrollChatToBottom();
 }
 function renderPendingAttachments() {
   chatAttachments.replaceChildren();
@@ -1152,6 +1193,7 @@ function closeMedia() {
   screenProducerPeers.clear();
   audioSubscriptions.clear();
   screenSubscriptions.clear();
+  stoppedScreenProducers.clear();
   ownScreenSoundActive = false;
   screenProducer?.close();
   screenStream?.getTracks().forEach((t) => t.stop());
@@ -1373,12 +1415,15 @@ async function handleEvent(m: ServerMessage) {
   }
   if (m.type === "producerClosed") removeRemote(String(m.producerId));
   if (m.type === "screenProducerStopped") {
-    removeScreen(String(m.producerId));
+    const producerId = String(m.producerId);
+    stoppedScreenProducers.add(producerId);
+    removeScreen(producerId, String(m.peerId));
     void playEventSound("screenStopped");
   }
   if (m.type === "screenProducerStarted") {
     const peerId = String(m.peerId),
       producerId = String(m.producerId);
+    stoppedScreenProducers.delete(producerId);
     screenProducerPeers.set(producerId, peerId);
     void playEventSound("screenStarted");
     if (recvTransport) await subscribeScreen(peerId, producerId);
@@ -1410,6 +1455,7 @@ async function subscribeScreen(peerId: string, producerId: string) {
   if (
     remoteScreens.has(producerId) ||
     screenSubscriptions.has(producerId) ||
+    stoppedScreenProducers.has(producerId) ||
     !recvTransport ||
     !device
   )
@@ -1437,6 +1483,11 @@ async function subscribeScreen(peerId: string, producerId: string) {
     video.playsInline = true;
     video.srcObject = new MediaStream([consumer.track]);
     remoteScreens.set(producerId, { video, consumer, peerId });
+    consumer.track.addEventListener(
+      "ended",
+      () => removeScreen(producerId, peerId),
+      { once: true },
+    );
     updateScreenIndicator(peerId, true);
     await request("resumeConsumer", { consumerId: data.id }).then(ensureOk);
     await video.play().catch(() => undefined);
@@ -1515,9 +1566,9 @@ function removeRemote(id: string) {
   remoteAudio.delete(id);
   producerPeers.delete(id);
 }
-function removeScreen(id: string) {
+function removeScreen(id: string, ownerOverride = "") {
   const i = remoteScreens.get(id);
-  const owner = screenProducerPeers.get(id);
+  const owner = ownerOverride || screenProducerPeers.get(id) || i?.peerId;
   i?.consumer.close();
   i?.video.pause();
   if (i) i.video.srcObject = null;
@@ -1527,6 +1578,7 @@ function removeScreen(id: string) {
     updateScreenIndicator(owner, false);
     if (screenWindowPeerId === owner) void closeScreenViewer();
   }
+  if (!owner && screenWindow) void closeScreenViewer();
 }
 function updateScreenIndicator(peerId: string, active: boolean) {
   const icon = document.querySelector<HTMLButtonElement>(

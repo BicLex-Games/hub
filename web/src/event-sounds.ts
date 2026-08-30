@@ -1,5 +1,9 @@
 export type EventSound =
-  "participantJoined" | "participantLeft" | "screenStarted" | "screenStopped";
+  | "participantJoined"
+  | "participantLeft"
+  | "screenStarted"
+  | "screenStopped"
+  | "messageReceived";
 
 type Note = {
   frequency: number;
@@ -29,6 +33,10 @@ const CUES: Record<EventSound, Note[]> = {
     { frequency: 1046.5, start: 0, duration: 0.1, gain: 0.17 },
     { frequency: 698.46, start: 0.09, duration: 0.11, gain: 0.19 },
     { frequency: 466.16, start: 0.18, duration: 0.24, gain: 0.21 },
+  ],
+  messageReceived: [
+    { frequency: 783.99, start: 0, duration: 0.09, gain: 0.14 },
+    { frequency: 1046.5, start: 0.07, duration: 0.16, gain: 0.16 },
   ],
 };
 
@@ -90,6 +98,6 @@ function cueUrl(cue: EventSound) {
 export function createEventSound(cue: EventSound) {
   const audio = new Audio(cueUrl(cue));
   audio.preload = "auto";
-  audio.volume = 0.75;
+  audio.volume = 0.375;
   return audio;
 }

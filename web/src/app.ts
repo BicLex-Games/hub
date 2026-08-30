@@ -25,7 +25,7 @@ import { createEventSound, type EventSound } from "./event-sounds";
 import "./style.css";
 import "./update.css";
 
-const CLIENT_VERSION = "0.3.12";
+const CLIENT_VERSION = "0.3.13";
 
 type Request = { requestId: string; type: string; [key: string]: unknown };
 type ServerMessage = {
@@ -324,11 +324,7 @@ function showServerSettings(show: boolean) {
   roomPage.style.display = "none";
   serverSettingsPage.style.display = show ? "block" : "none";
   const size = new LogicalSize(760, 720);
-  if (isTauri)
-    void getCurrentWindow()
-      .setSize(size)
-      .then(() => getCurrentWindow().center())
-      .catch(() => undefined);
+  void resizeMainWindow(size, true);
 }
 function setSetupError(message = "") {
   setupError.textContent = message;
@@ -337,6 +333,26 @@ function setConnection(state: "online" | "reconnecting") {
   connectionState.textContent =
     state === "online" ? t("online") : t("reconnecting");
   connectionState.classList.toggle("reconnecting", state === "reconnecting");
+}
+async function resizeMainWindow(size: LogicalSize, center = false) {
+  if (!isTauri) return;
+  const window = getCurrentWindow();
+  try {
+    await window.setSize(size);
+    await new Promise<void>((resolve) => globalThis.setTimeout(resolve, 80));
+    await window.setSize(size);
+    if (center) await window.center();
+    const actual = await window.outerSize();
+    diagnosticLog("WINDOW SIZE", {
+      requested: { width: size.width, height: size.height },
+      actual: { width: actual.width, height: actual.height },
+    });
+  } catch (error) {
+    diagnosticLog(
+      "WINDOW RESIZE FAILED",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
 }
 function showRoom(show: boolean) {
   diagnosticLog("ROOM SHOW", show);
@@ -350,14 +366,7 @@ function showRoom(show: boolean) {
   serverSettingsButton.disabled = show;
   chatServerName.textContent = activeServer?.name ?? "";
   const size = show ? new LogicalSize(1560, 760) : new LogicalSize(760, 760);
-  if (isTauri)
-    void getCurrentWindow()
-      .setSize(size)
-      .catch(() => undefined);
-  if (show && isTauri)
-    void getCurrentWindow()
-      .center()
-      .catch(() => undefined);
+  void resizeMainWindow(size, show);
 }
 function updateJoinButton() {
   joinButton.disabled = !nameInput.value.trim() || !activeServer || joining;

@@ -75,72 +75,8 @@ fn read_log_tail() -> Result<String, String> {
         .join("\n"))
 }
 
-fn safe_download_name(value: &str) -> String {
-    let filename = Path::new(value)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("file");
-    let mut safe = filename
-        .chars()
-        .map(|character| {
-            if character.is_control() || "<>:\"/\\|?*".contains(character) {
-                '_'
-            } else {
-                character
-            }
-        })
-        .collect::<String>();
-    while safe.ends_with(' ') || safe.ends_with('.') {
-        safe.pop();
-    }
-    if safe.is_empty() {
-        safe.push_str("file");
-    }
-    let stem = safe
-        .split('.')
-        .next()
-        .unwrap_or_default()
-        .to_ascii_uppercase();
-    let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
-        || ((stem.starts_with("COM") || stem.starts_with("LPT"))
-            && stem.len() == 4
-            && stem.as_bytes()[3].is_ascii_digit());
-    if reserved {
-        safe.insert(0, '_');
-    }
-    safe
-}
-
-fn available_download_path(directory: &Path, filename: &str) -> PathBuf {
-    let candidate = directory.join(filename);
-    if !candidate.exists() {
-        return candidate;
-    }
-    let filename = Path::new(filename);
-    let stem = filename
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .unwrap_or("file");
-    let extension = filename.extension().and_then(|value| value.to_str());
-    for suffix in 1..10_000 {
-        let name = match extension {
-            Some(extension) => format!("{stem} ({suffix}).{extension}"),
-            None => format!("{stem} ({suffix})"),
-        };
-        let candidate = directory.join(name);
-        if !candidate.exists() {
-            return candidate;
-        }
-    }
-    directory.join(format!("{}-{}", uuid::Uuid::new_v4(), filename.display()))
-}
-
 #[tauri::command]
-async fn download_attachment(
-    app: tauri::AppHandle,
-    url: String,
-    filename: String,
-) -> Result<String, String> {
+async fn download_attachment(url: String, destination: String) -> Result<String, String> {
     if !(url.starts_with("https://") || url.starts_with("http://")) {
         return Err("Unsupported download URL".into());
     }
@@ -160,18 +96,82 @@ async fn download_attachment(
     if bytes.len() as u64 > MAX_DOWNLOAD_SIZE {
         return Err("File exceeds the 100 MB download limit".into());
     }
-    let directory = app
-        .path()
-        .download_dir()
-        .map_err(|error| error.to_string())?;
-    fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
-    let path = available_download_path(&directory, &safe_download_name(&filename));
+    let path = PathBuf::from(destination);
+    if path.as_os_str().is_empty() || path.is_dir() {
+        return Err("Invalid download destination".into());
+    }
     let write_path = path.clone();
     tauri::async_runtime::spawn_blocking(move || fs::write(write_path, bytes))
         .await
         .map_err(|error| error.to_string())?
         .map_err(|error| error.to_string())?;
     Ok(path.to_string_lossy().into_owned())
+}
+
+fn attachment_mime(path: &Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "svg" => "image/svg+xml",
+        "avif" => "image/avif",
+        "txt" | "log" | "md" => "text/plain",
+        "pdf" => "application/pdf",
+        "zip" => "application/zip",
+        _ => "application/octet-stream",
+    }
+}
+
+#[tauri::command]
+async fn upload_dropped_file(path: String, url: String) -> Result<serde_json::Value, String> {
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return Err("Unsupported upload URL".into());
+    }
+    let source = PathBuf::from(path);
+    let metadata = fs::metadata(&source).map_err(|error| error.to_string())?;
+    const MAX_UPLOAD_SIZE: u64 = 100 * 1024 * 1024;
+    if !metadata.is_file() {
+        return Err("Dropped item is not a file".into());
+    }
+    if metadata.len() > MAX_UPLOAD_SIZE {
+        return Err("File exceeds the 100 MB upload limit".into());
+    }
+    let filename = source
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| "Invalid dropped filename".to_string())?
+        .to_string();
+    let mime = attachment_mime(&source);
+    let bytes = tauri::async_runtime::spawn_blocking(move || fs::read(source))
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|error| error.to_string())?;
+    let part = reqwest::multipart::Part::bytes(bytes)
+        .file_name(filename)
+        .mime_str(mime)
+        .map_err(|error| error.to_string())?;
+    let response = reqwest::Client::new()
+        .post(url)
+        .multipart(reqwest::multipart::Form::new().part("file", part))
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(format!("Upload failed: HTTP {status}"));
+    }
+    response
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -576,12 +576,14 @@ async fn deploy_server(
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             append_log,
             read_log_tail,
             download_attachment,
+            upload_dropped_file,
             open_devtools,
             deploy_server
         ])

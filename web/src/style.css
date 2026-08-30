@@ -409,18 +409,6 @@ button:disabled {
   object-fit: contain;
   background: #060b13;
 }
-.message-attachments img.loading {
-  min-height: 130px;
-  opacity: 0.55;
-  background: linear-gradient(110deg, #09111e 25%, #162944 45%, #09111e 65%);
-  background-size: 220% 100%;
-  animation: attachment-loading 1.25s linear infinite;
-}
-@keyframes attachment-loading {
-  to {
-    background-position-x: -220%;
-  }
-}
 .message-attachments span {
   padding: 7px 9px;
   overflow: hidden;
@@ -469,6 +457,27 @@ button:disabled {
 }
 .chat-pane.dragging .chat-drop-overlay {
   display: grid;
+}
+.image-preview-window,
+.image-preview-window body,
+.image-preview-window #app {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: #050912;
+}
+.standalone-image {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  place-items: center;
+}
+.standalone-image img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 #chat-form {
   display: grid;

@@ -2,6 +2,7 @@
 import { Device, types as MediasoupTypes } from "mediasoup-client";
 import { invoke } from "@tauri-apps/api/core";
 import { check } from "@tauri-apps/plugin-updater";
+import { save } from "@tauri-apps/plugin-dialog";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
@@ -24,7 +25,7 @@ import { createEventSound, type EventSound } from "./event-sounds";
 import "./style.css";
 import "./update.css";
 
-const CLIENT_VERSION = "0.3.4";
+const CLIENT_VERSION = "0.3.5";
 
 type Request = { requestId: string; type: string; [key: string]: unknown };
 type ServerMessage = {
@@ -733,35 +734,40 @@ async function fetchAttachment(attachment: ChatAttachment) {
     throw new Error(`${attachment.name}, HTTP ${response.status}`);
   return response.blob();
 }
-async function loadImagePreview(
-  image: HTMLImageElement,
-  attachment: ChatAttachment,
-) {
-  try {
-    const blob = await fetchAttachment(attachment);
-    if (!blob.type.startsWith("image/")) throw new Error("not an image");
-    const url = URL.createObjectURL(blob);
-    image.onload = () => {
-      image.classList.remove("loading");
-      URL.revokeObjectURL(url);
-    };
-    image.onerror = () => {
-      image.hidden = true;
-      URL.revokeObjectURL(url);
-    };
-    image.src = url;
-  } catch {
-    image.hidden = true;
+function openImagePreview(attachment: ChatAttachment) {
+  const src = attachmentUrl(attachment);
+  if (!isTauri) {
+    window.open(src, "_blank", "noopener,noreferrer");
+    return;
   }
+  const key = attachment.id.replace(/[^a-zA-Z0-9_-]/g, "");
+  const preview = new WebviewWindow(`image-preview-${key}-${Date.now()}`, {
+    url: `index.html?imagePreview=1&src=${encodeURIComponent(src)}&title=${encodeURIComponent(attachment.name)}`,
+    title: attachment.name,
+    width: 960,
+    height: 720,
+    minWidth: 420,
+    minHeight: 320,
+    resizable: true,
+    center: true,
+  });
+  preview.once("tauri://error", (event) =>
+    diagnosticLog("IMAGE PREVIEW WINDOW FAILED", event.payload),
+  );
 }
 async function downloadAttachment(attachment: ChatAttachment) {
-  uploadState.textContent = t("downloading", { name: attachment.name });
   try {
     const url = attachmentUrl(attachment);
     if (isTauri) {
+      const destination = await save({
+        title: t("saveFileAs"),
+        defaultPath: attachment.name,
+      });
+      if (!destination) return;
+      uploadState.textContent = t("downloading", { name: attachment.name });
       await invoke("download_attachment", {
         url,
-        filename: attachment.name,
+        destination,
       });
       uploadState.textContent = t("downloaded", { name: attachment.name });
       return;
@@ -820,21 +826,20 @@ function renderChatMessage(message: ChatMessage) {
     for (const attachment of message.attachments) {
       const link = document.createElement("a");
       link.href = attachmentUrl(attachment);
-      link.download = attachment.name;
       link.onclick = (event) => {
         event.preventDefault();
-        void downloadAttachment(attachment);
+        if (attachment.mime.startsWith("image/")) openImagePreview(attachment);
+        else void downloadAttachment(attachment);
       };
       if (attachment.mime.startsWith("image/")) {
         const image = document.createElement("img");
+        image.src = link.href;
         image.alt = attachment.name;
         image.loading = "lazy";
-        image.className = "loading";
         link.append(image);
-        void loadImagePreview(image, attachment);
       }
       const label = document.createElement("span");
-      label.textContent = `⇩ ${attachment.name} · ${fileSize(attachment.size)}`;
+      label.textContent = `${attachment.name} · ${fileSize(attachment.size)}`;
       link.append(label);
       attachments.append(link);
     }
@@ -893,6 +898,31 @@ function queueChatFiles(files: FileList | readonly File[]) {
   if (!selectedFiles.length) return;
   fileUploadQueue = fileUploadQueue.then(() => uploadChatFiles(selectedFiles));
 }
+async function uploadDroppedPaths(paths: readonly string[]) {
+  uploadState.textContent = t("uploading");
+  attachFileButton.disabled = true;
+  try {
+    const url = authenticatedUrl(effectiveServer(), "/api/files");
+    for (const path of paths) {
+      const attachment = await invoke<ChatAttachment>("upload_dropped_file", {
+        path,
+        url,
+      });
+      pendingChatAttachments.push(attachment);
+      renderPendingAttachments();
+    }
+    uploadState.textContent = "";
+  } catch (error) {
+    uploadState.textContent =
+      error instanceof Error ? error.message : String(error);
+  } finally {
+    attachFileButton.disabled = false;
+  }
+}
+function queueDroppedPaths(paths: readonly string[]) {
+  if (!paths.length) return;
+  fileUploadQueue = fileUploadQueue.then(() => uploadDroppedPaths(paths));
+}
 function setChatDragging(dragging: boolean) {
   chatPane.classList.toggle("dragging", dragging);
   chatDropOverlay.setAttribute("aria-hidden", String(!dragging));
@@ -929,6 +959,17 @@ chatPane.ondrop = (event) => {
   if (event.dataTransfer?.files.length)
     queueChatFiles(event.dataTransfer.files);
 };
+if (isTauri)
+  void getCurrentWindow().onDragDropEvent((event) => {
+    if (event.payload.type === "over") {
+      if (!roomPage.hidden) setChatDragging(true);
+    } else if (event.payload.type === "drop") {
+      setChatDragging(false);
+      if (!roomPage.hidden) queueDroppedPaths(event.payload.paths);
+    } else {
+      setChatDragging(false);
+    }
+  });
 chatForm.onsubmit = (event) => {
   event.preventDefault();
   const text = chatInput.value.trim();

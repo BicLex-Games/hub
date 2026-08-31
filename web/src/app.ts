@@ -5,7 +5,11 @@ import { check } from "@tauri-apps/plugin-updater";
 import { save } from "@tauri-apps/plugin-dialog";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
+import {
+  currentMonitor,
+  getCurrentWindow,
+  LogicalSize,
+} from "@tauri-apps/api/window";
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { GtcrnWorkletNode, loadGtcrn } from "@sapphi-red/web-noise-suppressor";
 import gtcrnWorkletPath from "@sapphi-red/web-noise-suppressor/gtcrnWorklet.js?url";
@@ -25,7 +29,7 @@ import { createEventSound, type EventSound } from "./event-sounds";
 import "./style.css";
 import "./update.css";
 
-const CLIENT_VERSION = "0.3.15";
+const CLIENT_VERSION = "0.3.16";
 
 type Request = { requestId: string; type: string; [key: string]: unknown };
 type ServerMessage = {
@@ -363,6 +367,45 @@ async function resizeMainWindow(
     return null;
   }
 }
+async function preferredRoomWindowSize(): Promise<LogicalSize> {
+  const fallback = new LogicalSize(900, 650);
+  if (!isTauri) return fallback;
+  try {
+    const monitor = await currentMonitor();
+    if (!monitor) return fallback;
+    const screen = monitor.size.toLogical(monitor.scaleFactor);
+    const workArea = monitor.workArea.size.toLogical(monitor.scaleFactor);
+    const relativeScale = Math.min(screen.width / 2560, screen.height / 1440);
+    const width = Math.max(
+      700,
+      Math.min(
+        Math.round(900 * relativeScale),
+        Math.floor(workArea.width - 32),
+      ),
+    );
+    const height = Math.max(
+      620,
+      Math.min(
+        Math.round(650 * relativeScale),
+        Math.floor(workArea.height - 32),
+      ),
+    );
+    diagnosticLog("ROOM WINDOW TARGET", {
+      monitor: monitor.name,
+      screen: { width: screen.width, height: screen.height },
+      workArea: { width: workArea.width, height: workArea.height },
+      scaleFactor: monitor.scaleFactor,
+      target: { width, height },
+    });
+    return new LogicalSize(width, height);
+  } catch (error) {
+    diagnosticLog(
+      "ROOM WINDOW TARGET FAILED",
+      error instanceof Error ? error.message : String(error),
+    );
+    return fallback;
+  }
+}
 function showRoom(show: boolean) {
   diagnosticLog("ROOM SHOW", show);
   setupPage.hidden = show;
@@ -374,14 +417,9 @@ function showRoom(show: boolean) {
   serverSelect.disabled = show;
   serverSettingsButton.disabled = show;
   chatServerName.textContent = activeServer?.name ?? "";
-  const size = show ? new LogicalSize(1560, 760) : new LogicalSize(760, 760);
-  roomPage.classList.remove("room-wide");
-  void resizeMainWindow(size, show).then((actualLogicalWidth) => {
-    roomPage.classList.toggle(
-      "room-wide",
-      show && actualLogicalWidth !== null && actualLogicalWidth >= 1200,
-    );
-  });
+  if (show)
+    void preferredRoomWindowSize().then((size) => resizeMainWindow(size, true));
+  else void resizeMainWindow(new LogicalSize(760, 760));
 }
 function updateJoinButton() {
   joinButton.disabled = !nameInput.value.trim() || !activeServer || joining;

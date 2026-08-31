@@ -164,9 +164,6 @@ button:disabled {
   padding: 14px;
   gap: 14px;
 }
-.room-page.room-wide {
-  grid-template-columns: minmax(320px, 2fr) minmax(0, 3fr);
-}
 .conference-pane {
   display: flex;
   min-width: 0;

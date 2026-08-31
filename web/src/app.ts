@@ -29,7 +29,7 @@ import { createEventSound, type EventSound } from "./event-sounds";
 import "./style.css";
 import "./update.css";
 
-const CLIENT_VERSION = "0.3.16";
+const CLIENT_VERSION = "0.3.17";
 
 type Request = { requestId: string; type: string; [key: string]: unknown };
 type ServerMessage = {
@@ -114,6 +114,7 @@ type RemoteScreen = {
 
 const HEARTBEAT_MS = 20_000,
   PONG_TIMEOUT_MS = 55_000,
+  CHAT_PAGE_SIZE = 15,
   RECONNECT_DELAYS = [1_000, 2_000, 5_000, 10_000],
   SPEAKING_THRESHOLD = 0.025,
   SPEAKING_HANGOVER_MS = 300;
@@ -417,9 +418,10 @@ function showRoom(show: boolean) {
   serverSelect.disabled = show;
   serverSettingsButton.disabled = show;
   chatServerName.textContent = activeServer?.name ?? "";
-  if (show)
+  if (show) {
+    scrollChatToBottom("auto");
     void preferredRoomWindowSize().then((size) => resizeMainWindow(size, true));
-  else void resizeMainWindow(new LogicalSize(760, 760));
+  } else void resizeMainWindow(new LogicalSize(760, 760));
 }
 function updateJoinButton() {
   joinButton.disabled = !nameInput.value.trim() || !activeServer || joining;
@@ -777,6 +779,9 @@ async function toggleMonitor() {
   }
 }
 const renderedChatMessages = new Set<string>();
+let oldestChatMessageId: string | undefined;
+let chatHasMore = false;
+let chatHistoryLoading = true;
 function effectiveServer(): HubServer {
   if (!activeServer) throw new Error(t("serverNotSelected"));
   return localSignaling
@@ -901,7 +906,11 @@ function scrollChatToBottom(behavior: ScrollBehavior = "smooth") {
     });
   });
 }
-function renderChatMessage(message: ChatMessage) {
+function renderChatMessage(
+  message: ChatMessage,
+  position: "append" | "prepend" = "append",
+  scrollToLatest = true,
+) {
   if (renderedChatMessages.has(message.id)) return;
   renderedChatMessages.add(message.id);
   const item = document.createElement("article");
@@ -945,9 +954,10 @@ function renderChatMessage(message: ChatMessage) {
         image.src = link.href;
         image.alt = attachment.name;
         image.loading = "lazy";
-        image.addEventListener("load", () => scrollChatToBottom("auto"), {
-          once: true,
-        });
+        if (scrollToLatest)
+          image.addEventListener("load", () => scrollChatToBottom("auto"), {
+            once: true,
+          });
         link.append(image);
       }
       const label = document.createElement("span");
@@ -957,9 +967,58 @@ function renderChatMessage(message: ChatMessage) {
     }
     item.append(attachments);
   }
-  chatMessages.append(item);
-  scrollChatToBottom();
+  if (position === "prepend") chatMessages.prepend(item);
+  else chatMessages.append(item);
+  if (scrollToLatest) scrollChatToBottom();
 }
+function resetChatHistory() {
+  renderedChatMessages.clear();
+  chatMessages.replaceChildren();
+  oldestChatMessageId = undefined;
+  chatHasMore = false;
+  chatHistoryLoading = true;
+}
+function renderInitialChatHistory(messages: ChatMessage[], hasMore: boolean) {
+  resetChatHistory();
+  for (const message of messages) renderChatMessage(message, "append", false);
+  oldestChatMessageId = messages[0]?.id;
+  chatHasMore = hasMore;
+  scrollChatToBottom("auto");
+  requestAnimationFrame(() => {
+    chatHistoryLoading = false;
+  });
+}
+async function loadOlderChatHistory() {
+  if (chatHistoryLoading || !chatHasMore || !oldestChatMessageId) return;
+  chatHistoryLoading = true;
+  const previousHeight = chatMessages.scrollHeight;
+  const previousTop = chatMessages.scrollTop;
+  try {
+    const response = await request("getChatHistory", {
+      before: oldestChatMessageId,
+      limit: CHAT_PAGE_SIZE,
+    }).then(ensureOk);
+    const messages = response.messages as ChatMessage[];
+    for (const message of [...messages].reverse())
+      renderChatMessage(message, "prepend", false);
+    oldestChatMessageId = messages[0]?.id ?? oldestChatMessageId;
+    chatHasMore = Boolean(response.hasMore);
+    requestAnimationFrame(() => {
+      chatMessages.scrollTop =
+        previousTop + (chatMessages.scrollHeight - previousHeight);
+      chatHistoryLoading = false;
+    });
+  } catch (error) {
+    diagnosticLog(
+      "CHAT HISTORY LOAD FAILED",
+      error instanceof Error ? error.message : String(error),
+    );
+    chatHistoryLoading = false;
+  }
+}
+chatMessages.addEventListener("scroll", () => {
+  if (chatMessages.scrollTop <= 80) void loadOlderChatHistory();
+});
 function renderPendingAttachments() {
   chatAttachments.replaceChildren();
   for (const attachment of pendingChatAttachments) {
@@ -1310,14 +1369,16 @@ async function connect(reconnecting = false, noMicrophone = false) {
       updateJoinButton();
       return;
     }
-    renderedChatMessages.clear();
-    chatMessages.replaceChildren();
+    resetChatHistory();
     pendingChatAttachments = [];
     renderPendingAttachments();
     uploadState.textContent = "";
     setSetupError(t("checkingLocalServer"));
     localSignaling = await probeLocalSignaling();
-  } else teardown("Reconnecting");
+  } else {
+    teardown("Reconnecting");
+    resetChatHistory();
+  }
   try {
     if (!activeServer) throw new Error(t("serverNotSelected"));
     const signalingUrl = websocketUrl(activeServer, localSignaling);
@@ -1441,8 +1502,7 @@ async function connect(reconnecting = false, noMicrophone = false) {
 }
 async function handleEvent(m: ServerMessage) {
   if (m.type === "chatHistory") {
-    for (const message of m.messages as ChatMessage[])
-      renderChatMessage(message);
+    renderInitialChatHistory(m.messages as ChatMessage[], Boolean(m.hasMore));
   }
   if (m.type === "chatMessage") {
     const message = m.message as ChatMessage;

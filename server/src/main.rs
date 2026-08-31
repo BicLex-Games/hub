@@ -65,6 +65,10 @@ enum ClientCommand {
         text: String,
         attachments: Vec<ChatAttachment>,
     },
+    GetChatHistory {
+        before: Option<String>,
+        limit: Option<usize>,
+    },
     Leave,
     Ping,
 }
@@ -133,6 +137,7 @@ enum ServerEvent {
     },
     ChatHistory {
         messages: Vec<ChatMessage>,
+        has_more: bool,
     },
     ChatMessage {
         message: ChatMessage,
@@ -556,6 +561,20 @@ async fn handle_command(
         ClientCommand::SendChatMessage { text, attachments } => {
             send_chat_message(request_id, room, tx, peer_id, text, attachments).await?
         }
+        ClientCommand::GetChatHistory { before, limit } => {
+            let guard = room.lock().await;
+            peer(&guard, peer_id)?;
+            let (messages, has_more) = chat_history_page(
+                &guard.messages,
+                before.as_deref(),
+                limit.unwrap_or(15).clamp(1, 50),
+            );
+            reply(
+                tx,
+                request_id,
+                ServerEvent::ChatHistory { messages, has_more },
+            );
+        }
         ClientCommand::Ping => {
             debug!("Heartbeat ping received; pong sent");
             reply(tx, request_id, ServerEvent::Pong)
@@ -631,22 +650,8 @@ async fn join(
         },
     );
     reply(tx, None, ServerEvent::Users { users });
-    reply(
-        tx,
-        None,
-        ServerEvent::ChatHistory {
-            messages: guard
-                .messages
-                .iter()
-                .rev()
-                .take(200)
-                .cloned()
-                .collect::<Vec<_>>()
-                .into_iter()
-                .rev()
-                .collect(),
-        },
-    );
+    let (messages, has_more) = chat_history_page(&guard.messages, None, 15);
+    reply(tx, None, ServerEvent::ChatHistory { messages, has_more });
     broadcast_except(
         &guard,
         &id,
@@ -656,6 +661,26 @@ async fn join(
         },
     );
     Ok(())
+}
+
+fn chat_history_page(
+    messages: &VecDeque<ChatMessage>,
+    before: Option<&str>,
+    limit: usize,
+) -> (Vec<ChatMessage>, bool) {
+    let end = before
+        .and_then(|id| messages.iter().position(|message| message.id == id))
+        .unwrap_or(messages.len());
+    let start = end.saturating_sub(limit);
+    (
+        messages
+            .iter()
+            .skip(start)
+            .take(end - start)
+            .cloned()
+            .collect(),
+        start > 0,
+    )
 }
 
 async fn send_chat_message(

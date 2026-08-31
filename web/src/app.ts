@@ -29,7 +29,7 @@ import { createEventSound, type EventSound } from "./event-sounds";
 import "./style.css";
 import "./update.css";
 
-const CLIENT_VERSION = "0.3.17";
+const CLIENT_VERSION = "0.3.18";
 
 type Request = { requestId: string; type: string; [key: string]: unknown };
 type ServerMessage = {
@@ -44,6 +44,7 @@ type User = {
   name: string;
   producerId?: string;
   screenProducerId?: string;
+  screenAudioProducerId?: string;
 };
 type ChatAttachment = {
   id: string;
@@ -108,6 +109,10 @@ type RemoteAudio = {
 };
 type RemoteScreen = {
   video: HTMLVideoElement;
+  consumer: MediasoupTypes.Consumer;
+  peerId: string;
+};
+type RemoteScreenAudio = {
   consumer: MediasoupTypes.Consumer;
   peerId: string;
 };
@@ -250,6 +255,7 @@ let socket: WebSocket | undefined,
   reconnectAttempt = 0,
   intentionalDisconnect = true,
   joining = false,
+  screenAudioSupported = false,
   ownPeerId = "",
   sequence = 0;
 const pending = new Map<
@@ -261,16 +267,21 @@ const pending = new Map<
   >(),
   remoteAudio = new Map<string, RemoteAudio>(),
   remoteScreens = new Map<string, RemoteScreen>(),
+  remoteScreenAudio = new Map<string, RemoteScreenAudio>(),
   audioSubscriptions = new Set<string>(),
   screenSubscriptions = new Set<string>(),
+  screenAudioSubscriptions = new Set<string>(),
   stoppedScreenProducers = new Set<string>(),
+  stoppedScreenAudioProducers = new Set<string>(),
   activeEventSounds = new Set<HTMLAudioElement>(),
   knownUsers = new Map<string, User>(),
   producerPeers = new Map<string, string>(),
   screenProducerPeers = new Map<string, string>(),
+  screenAudioProducerPeers = new Map<string, string>(),
   speakingUntil = new Map<string, number>();
 let screenStream: MediaStream | undefined,
-  screenProducer: MediasoupTypes.Producer | undefined;
+  screenProducer: MediasoupTypes.Producer | undefined,
+  screenAudioProducer: MediasoupTypes.Producer | undefined;
 let noiseMode =
     (localStorage.getItem("biclex-noise-mode") as NoiseMode | null) ?? "off",
   screenQuality =
@@ -1308,17 +1319,23 @@ function closeMedia() {
   outgoingTrack = undefined;
   outgoingAi = undefined;
   device = undefined;
+  screenAudioSupported = false;
   ownPeerId = "";
   knownUsers.clear();
   producerPeers.clear();
   screenProducerPeers.clear();
+  screenAudioProducerPeers.clear();
   audioSubscriptions.clear();
   screenSubscriptions.clear();
+  screenAudioSubscriptions.clear();
   stoppedScreenProducers.clear();
+  stoppedScreenAudioProducers.clear();
   ownScreenSoundActive = false;
   screenProducer?.close();
+  screenAudioProducer?.close();
   screenStream?.getTracks().forEach((t) => t.stop());
   screenProducer = undefined;
+  screenAudioProducer = undefined;
   screenStream = undefined;
   screenRtc?.close();
   screenRtc = undefined;
@@ -1334,6 +1351,10 @@ function closeMedia() {
     i.video.pause();
     i.video.srcObject = null;
     remoteScreens.delete(id);
+  }
+  for (const [id, i] of remoteScreenAudio) {
+    i.consumer.close();
+    remoteScreenAudio.delete(id);
   }
   screens.replaceChildren();
   screens.hidden = true;
@@ -1417,6 +1438,8 @@ async function connect(reconnecting = false, noMicrophone = false) {
     const joined = await request("join", { name }).then(ensureOk);
     const joinedName = String(joined.name ?? name);
     ownPeerId = String(joined.peerId ?? "");
+    screenAudioSupported = Boolean(joined.screenAudioSupported);
+    diagnosticLog("SCREEN AUDIO SUPPORTED", screenAudioSupported);
     setSetupError(t("loadingAudio"));
     const caps = await request("getRouterRtpCapabilities").then(ensureOk);
     device = new Device();
@@ -1516,8 +1539,12 @@ async function handleEvent(m: ServerMessage) {
       if (u.producerId) producerPeers.set(u.producerId, u.peerId);
       if (u.screenProducerId)
         screenProducerPeers.set(u.screenProducerId, u.peerId);
+      if (u.screenAudioProducerId)
+        screenAudioProducerPeers.set(u.screenAudioProducerId, u.peerId);
       renderUser(u);
       if (recvTransport && u.producerId) void subscribe(u.peerId, u.producerId);
+      if (recvTransport && u.screenAudioProducerId)
+        void subscribeScreenAudio(u.peerId, u.screenAudioProducerId);
       if (recvTransport && u.screenProducerId)
         void subscribeScreen(u.peerId, u.screenProducerId);
     }
@@ -1531,6 +1558,8 @@ async function handleEvent(m: ServerMessage) {
     const peer = String(m.peerId);
     for (const [id, owner] of producerPeers)
       if (owner === peer) removeRemote(id);
+    for (const [id, owner] of screenAudioProducerPeers)
+      if (owner === peer) removeScreenAudio(id);
     knownUsers.delete(peer);
     removeUser(peer);
     void playEventSound("participantLeft");
@@ -1551,6 +1580,18 @@ async function handleEvent(m: ServerMessage) {
     if (recvTransport) await subscribeScreen(peerId, producerId);
     updateScreenIndicator(peerId, true);
   }
+  if (m.type === "screenAudioProducerStopped") {
+    const producerId = String(m.producerId);
+    stoppedScreenAudioProducers.add(producerId);
+    removeScreenAudio(producerId);
+  }
+  if (m.type === "screenAudioProducerStarted") {
+    const peerId = String(m.peerId),
+      producerId = String(m.producerId);
+    stoppedScreenAudioProducers.delete(producerId);
+    screenAudioProducerPeers.set(producerId, peerId);
+    if (recvTransport) await subscribeScreenAudio(peerId, producerId);
+  }
   if (m.type === "newProducer") {
     const peerId = String(m.peerId),
       producerId = String(m.producerId);
@@ -1563,10 +1604,14 @@ async function subscribeKnownMedia() {
     "SUBSCRIBE KNOWN MEDIA",
     `audio=${producerPeers.size}`,
     `screen=${screenProducerPeers.size}`,
+    `screenAudio=${screenAudioProducerPeers.size}`,
   );
   await Promise.all([
     ...[...producerPeers].map(([producerId, peerId]) =>
       subscribe(peerId, producerId),
+    ),
+    ...[...screenAudioProducerPeers].map(([producerId, peerId]) =>
+      subscribeScreenAudio(peerId, producerId),
     ),
     ...[...screenProducerPeers].map(([producerId, peerId]) =>
       subscribeScreen(peerId, producerId),
@@ -1620,6 +1665,50 @@ async function subscribeScreen(peerId: string, producerId: string) {
     );
   } finally {
     screenSubscriptions.delete(producerId);
+  }
+}
+async function subscribeScreenAudio(peerId: string, producerId: string) {
+  if (
+    remoteScreenAudio.has(producerId) ||
+    screenAudioSubscriptions.has(producerId) ||
+    stoppedScreenAudioProducers.has(producerId) ||
+    !recvTransport ||
+    !device
+  )
+    return;
+  screenAudioSubscriptions.add(producerId);
+  try {
+    const reply = await request("consume", {
+      producerId,
+      rtpCapabilities: device.recvRtpCapabilities,
+    }).then(ensureOk);
+    const data = reply.consumer as {
+      id: string;
+      producerId: string;
+      kind: "audio";
+      rtpParameters: MediasoupTypes.RtpParameters;
+    };
+    const consumer = await recvTransport.consume({
+      id: data.id,
+      producerId: data.producerId,
+      kind: data.kind,
+      rtpParameters: data.rtpParameters,
+    });
+    remoteScreenAudio.set(producerId, { consumer, peerId });
+    consumer.track.addEventListener(
+      "ended",
+      () => removeScreenAudio(producerId),
+      { once: true },
+    );
+    await request("resumeConsumer", { consumerId: data.id }).then(ensureOk);
+    diagnosticLog("SCREEN AUDIO CONSUMER READY", peerId, producerId);
+  } catch (error) {
+    diagnosticLog(
+      "SCREEN AUDIO CONSUME FAILED",
+      error instanceof Error ? error.message : String(error),
+    );
+  } finally {
+    screenAudioSubscriptions.delete(producerId);
   }
 }
 async function subscribe(peerId: string, producerId: string) {
@@ -1702,6 +1791,12 @@ function removeScreen(id: string, ownerOverride = "") {
   }
   if (!owner && screenWindow) void closeScreenViewer();
 }
+function removeScreenAudio(id: string) {
+  const item = remoteScreenAudio.get(id);
+  item?.consumer.close();
+  remoteScreenAudio.delete(id);
+  screenAudioProducerPeers.delete(id);
+}
 function updateScreenIndicator(peerId: string, active: boolean) {
   const icon = document.querySelector<HTMLButtonElement>(
     `[data-peer="${CSS.escape(peerId)}"] .screen-icon`,
@@ -1723,11 +1818,20 @@ async function openScreen(peerId: string) {
         ([, owner]) => owner === peerId,
       )?.[0];
   if (!producerId) return;
-  const sourceStream = ownScreen
+  const videoStream = ownScreen
     ? screenStream
     : (remoteScreens.get(producerId)?.video.srcObject as
         MediaStream | undefined);
-  if (!sourceStream) return;
+  if (!videoStream) return;
+  const audioTrack = ownScreen
+    ? screenStream?.getAudioTracks()[0]
+    : [...remoteScreenAudio.values()].find(
+        (item) => item.peerId === peerId,
+      )?.consumer.track;
+  const sourceStream = new MediaStream([
+    ...videoStream.getVideoTracks(),
+    ...(audioTrack ? [audioTrack] : []),
+  ]);
   await closeScreenViewer();
   const eventKey = producerId.replace(/[^a-zA-Z0-9_-]/g, "");
   const pendingCandidates: RTCIceCandidateInit[] = [];
@@ -1743,14 +1847,18 @@ async function openScreen(peerId: string) {
             event.candidate.toJSON(),
           );
       };
-      const track = sourceStream.getVideoTracks()[0];
-      if (!track) {
+      const videoTrack = sourceStream.getVideoTracks()[0];
+      if (!videoTrack) {
         diagnosticLog("SCREEN TRACK MISSING", producerId);
         return;
       }
-      const bridgeSender = screenRtc.addTrack(track, sourceStream);
+      let bridgeVideoSender: RTCRtpSender | undefined;
+      for (const track of sourceStream.getTracks()) {
+        const sender = screenRtc.addTrack(track, sourceStream);
+        if (track.kind === "video") bridgeVideoSender = sender;
+      }
       await screenRtc.setLocalDescription(await screenRtc.createOffer());
-      const bridgeParameters = bridgeSender.getParameters();
+      const bridgeParameters = bridgeVideoSender!.getParameters();
       bridgeParameters.degradationPreference = "maintain-resolution";
       for (const encoding of bridgeParameters.encodings) {
         encoding.maxBitrate = 50_000_000;
@@ -1759,9 +1867,14 @@ async function openScreen(peerId: string) {
         encoding.priority = "high";
         encoding.networkPriority = "high";
       }
-      await bridgeSender.setParameters(bridgeParameters);
+      await bridgeVideoSender!.setParameters(bridgeParameters);
       await emit(`screen-offer-${eventKey}`, screenRtc.localDescription);
-      diagnosticLog("SCREEN OFFER SENT", producerId, "BRIDGE MAX 50Mbps");
+      diagnosticLog(
+        "SCREEN OFFER SENT",
+        producerId,
+        "BRIDGE MAX 50Mbps",
+        `audio=${Boolean(audioTrack)}`,
+      );
     }),
     await listen<RTCSessionDescriptionInit>(
       `screen-answer-${eventKey}`,
@@ -1788,7 +1901,7 @@ async function openScreen(peerId: string) {
       : (knownUsers.get(peerId)?.name ?? t("participant")),
   });
   screenWindow = new WebviewWindow(`screen-${eventKey}`, {
-    url: `index.html?screenViewer=1&eventKey=${encodeURIComponent(eventKey)}&title=${encodeURIComponent(title)}`,
+    url: `index.html?screenViewer=1&eventKey=${encodeURIComponent(eventKey)}&title=${encodeURIComponent(title)}&ownScreen=${ownScreen ? "1" : "0"}`,
     title,
     width: 960,
     height: 540,
@@ -1900,13 +2013,20 @@ screenButton.onclick = async () => {
   if (!sendTransport) return;
   if (screenProducer) {
     const producerId = screenProducer.id;
+    const audioProducerId = screenAudioProducer?.id;
+    if (audioProducerId)
+      void request("closeProducer", {
+        producerId: audioProducerId,
+      }).catch(() => undefined);
     void request("closeProducer", { producerId }).catch(() => undefined);
+    screenAudioProducer?.close();
     screenProducer.close();
     updateScreenIndicator("self", false);
     if (screenWindowPeerId === "self") void closeScreenViewer();
     playOwnScreenStoppedSound();
     screenStream?.getTracks().forEach((t) => t.stop());
     screenProducer = undefined;
+    screenAudioProducer = undefined;
     screenStream = undefined;
     screenQualitySelect.disabled = false;
     screenButton.textContent = `🖥 ${t("screenShare")}`;
@@ -1920,13 +2040,42 @@ screenButton.onclick = async () => {
         height: { ideal: profile.height, max: profile.height },
         frameRate: { ideal: profile.fps, max: profile.fps },
       },
-      audio: false,
+      audio: true,
     });
     const track = screenStream.getVideoTracks()[0];
+    const audioTrack = screenStream.getAudioTracks()[0];
     track.contentHint = "detail";
+    if (audioTrack && screenAudioSupported) {
+      audioTrack.contentHint = "music";
+      screenAudioProducer = await withTimeout(
+        sendTransport.produce({
+          track: audioTrack,
+          appData: { source: "screen-audio" },
+          codecOptions: {
+            opusStereo: true,
+            opusDtx: false,
+            opusFec: true,
+          },
+        }),
+        "screenShare.audio.produce",
+      );
+      audioTrack.onended = () => {
+        const producerId = screenAudioProducer?.id;
+        if (producerId)
+          void request("closeProducer", { producerId }).catch(
+            () => undefined,
+          );
+        screenAudioProducer?.close();
+        screenAudioProducer = undefined;
+      };
+    } else if (audioTrack) {
+      audioTrack.stop();
+      diagnosticLog("SCREEN AUDIO DISABLED BY LEGACY SERVER");
+    }
     screenProducer = await withTimeout(
       sendTransport.produce({
         track,
+        appData: { source: "screen-video" },
         encodings: [
           {
             maxBitrate: profile.bitrate,
@@ -1964,9 +2113,16 @@ screenButton.onclick = async () => {
     screenButton.textContent = `■ ${t("stopScreenShare")}`;
     track.onended = () => {
       const producerId = screenProducer?.id;
+      const audioProducerId = screenAudioProducer?.id;
+      if (audioProducerId)
+        void request("closeProducer", {
+          producerId: audioProducerId,
+        }).catch(() => undefined);
       if (producerId)
         void request("closeProducer", { producerId }).catch(() => undefined);
+      screenAudioProducer?.close();
       screenProducer?.close();
+      screenAudioProducer = undefined;
       screenProducer = undefined;
       screenStream = undefined;
       updateScreenIndicator("self", false);
@@ -1976,6 +2132,13 @@ screenButton.onclick = async () => {
       playOwnScreenStoppedSound();
     };
   } catch (error) {
+    const audioProducerId = screenAudioProducer?.id;
+    if (audioProducerId)
+      void request("closeProducer", { producerId: audioProducerId }).catch(
+        () => undefined,
+      );
+    screenAudioProducer?.close();
+    screenAudioProducer = undefined;
     screenStream?.getTracks().forEach((t) => t.stop());
     screenStream = undefined;
     screenQualitySelect.disabled = false;
@@ -2102,8 +2265,13 @@ function createSendTransport(m: ServerMessage) {
       .then(cb)
       .catch(eb);
   });
-  t.on("produce", ({ kind, rtpParameters }, cb, eb) => {
-    request("produce", { kind, rtpParameters })
+  t.on("produce", ({ kind, rtpParameters, appData }, cb, eb) => {
+    request("produce", {
+      kind,
+      rtpParameters,
+      source:
+        typeof appData.source === "string" ? appData.source : undefined,
+    })
       .then(ensureOk)
       .then((r) => cb({ id: String(r.producerId) }))
       .catch(eb);
@@ -2128,14 +2296,30 @@ if (viewerParams.get("screenViewer") === "1") {
   void (async () => {
     const eventKey = viewerParams.get("eventKey") ?? "screen";
     const viewerVideo = app.querySelector("video") as HTMLVideoElement;
+    const viewerStream = new MediaStream();
+    viewerVideo.srcObject = viewerStream;
+    viewerVideo.muted = viewerParams.get("ownScreen") === "1";
     const viewerRtc = new RTCPeerConnection();
     const pendingCandidates: RTCIceCandidateInit[] = [];
     let offerReceived = false;
     viewerRtc.ontrack = (event) => {
-      viewerVideo.srcObject =
-        event.streams[0] ?? new MediaStream([event.track]);
+      if (!viewerStream.getTracks().some((track) => track.id === event.track.id))
+        viewerStream.addTrack(event.track);
       void viewerVideo.play().catch(() => undefined);
-      diagnosticLog("SCREEN VIEWER TRACK RECEIVED", event.track.readyState);
+      const outputDeviceId = localStorage.getItem("biclex-output-device") ?? "";
+      if (outputDeviceId && "setSinkId" in viewerVideo)
+        void (
+          viewerVideo as HTMLVideoElement & {
+            setSinkId(deviceId: string): Promise<void>;
+          }
+        )
+          .setSinkId(outputDeviceId)
+          .catch(() => undefined);
+      diagnosticLog(
+        "SCREEN VIEWER TRACK RECEIVED",
+        event.track.kind,
+        event.track.readyState,
+      );
     };
     viewerRtc.onicecandidate = (event) => {
       if (event.candidate)

@@ -46,6 +46,7 @@ enum ClientCommand {
     Produce {
         kind: String,
         rtp_parameters: Value,
+        source: Option<String>,
     },
     CreateRecvTransport,
     ConnectRecvTransport {
@@ -92,6 +93,7 @@ enum ServerEvent {
         name: String,
         room: String,
         turn_ice_servers: Vec<Value>,
+        screen_audio_supported: bool,
     },
     Users {
         users: Vec<UserInfo>,
@@ -135,6 +137,14 @@ enum ServerEvent {
         peer_id: String,
         producer_id: String,
     },
+    ScreenAudioProducerStarted {
+        peer_id: String,
+        producer_id: String,
+    },
+    ScreenAudioProducerStopped {
+        peer_id: String,
+        producer_id: String,
+    },
     ChatHistory {
         messages: Vec<ChatMessage>,
         has_more: bool,
@@ -155,6 +165,7 @@ struct UserInfo {
     name: String,
     producer_id: Option<String>,
     screen_producer_id: Option<String>,
+    screen_audio_producer_id: Option<String>,
 }
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -204,6 +215,7 @@ struct Peer {
     recv_transport: Option<WebRtcTransport>,
     producer: Option<Producer>,
     screen_producer: Option<Producer>,
+    screen_audio_producer: Option<Producer>,
     consumers: HashMap<String, Consumer>,
 }
 struct Room {
@@ -540,7 +552,8 @@ async fn handle_command(
         ClientCommand::Produce {
             kind,
             rtp_parameters,
-        } => produce(request_id, room, tx, peer_id, kind, rtp_parameters).await?,
+            source,
+        } => produce(request_id, room, tx, peer_id, kind, source, rtp_parameters).await?,
         ClientCommand::Consume {
             producer_id,
             rtp_capabilities,
@@ -623,6 +636,7 @@ async fn join(
             name: p.name.clone(),
             producer_id: p.producer.as_ref().map(|x| x.id().to_string()),
             screen_producer_id: p.screen_producer.as_ref().map(|x| x.id().to_string()),
+            screen_audio_producer_id: p.screen_audio_producer.as_ref().map(|x| x.id().to_string()),
         })
         .collect();
     guard.peers.insert(
@@ -635,6 +649,7 @@ async fn join(
             recv_transport: None,
             producer: None,
             screen_producer: None,
+            screen_audio_producer: None,
             consumers: HashMap::new(),
         },
     );
@@ -647,6 +662,7 @@ async fn join(
             name: name.clone(),
             room: ROOM_NAME.into(),
             turn_ice_servers,
+            screen_audio_supported: true,
         },
     );
     reply(tx, None, ServerEvent::Users { users });
@@ -854,6 +870,7 @@ async fn produce(
     tx: &mpsc::UnboundedSender<ServerEnvelope>,
     peer_id: &Option<String>,
     kind: String,
+    source: Option<String>,
     params: Value,
 ) -> anyhow::Result<()> {
     let media_kind = match kind.as_str() {
@@ -866,7 +883,19 @@ async fn produce(
         peer(&guard, peer_id)?.send_transport.clone()
     }
     .ok_or_else(|| anyhow::anyhow!("send transport not created"))?;
-    info!(peer_id = ?peer_id, kind = %kind, "PRODUCE requested");
+    let source = source.unwrap_or_else(|| {
+        if kind == "video" {
+            "screen-video".to_owned()
+        } else {
+            "microphone".to_owned()
+        }
+    });
+    if (source == "screen-audio" && kind != "audio")
+        || (source == "screen-video" && kind != "video")
+    {
+        anyhow::bail!("media source does not match media kind");
+    }
+    info!(peer_id = ?peer_id, kind = %kind, source = %source, "PRODUCE requested");
     let producer = transport
         .produce(ProducerOptions::new(
             media_kind,
@@ -878,10 +907,11 @@ async fn produce(
     let mut guard = room.lock().await;
     let id = peer_id.as_ref().unwrap();
     let name = guard.peers[id].name.clone();
-    if kind == "audio" {
-        guard.peers.get_mut(id).unwrap().producer = Some(producer);
-    } else {
-        guard.peers.get_mut(id).unwrap().screen_producer = Some(producer);
+    match source.as_str() {
+        "screen-audio" => guard.peers.get_mut(id).unwrap().screen_audio_producer = Some(producer),
+        "screen-video" => guard.peers.get_mut(id).unwrap().screen_producer = Some(producer),
+        _ if kind == "audio" => guard.peers.get_mut(id).unwrap().producer = Some(producer),
+        _ => guard.peers.get_mut(id).unwrap().screen_producer = Some(producer),
     }
     reply(
         tx,
@@ -890,7 +920,16 @@ async fn produce(
             producer_id: producer_id.clone(),
         },
     );
-    if kind == "audio" {
+    if source == "screen-audio" {
+        broadcast_except(
+            &guard,
+            id,
+            ServerEvent::ScreenAudioProducerStarted {
+                peer_id: id.clone(),
+                producer_id,
+            },
+        );
+    } else if kind == "audio" {
         broadcast_except(
             &guard,
             id,
@@ -940,6 +979,12 @@ async fn consume(
                             .as_ref()
                             .filter(|x| x.id().to_string() == producer_id)
                             .cloned()
+                            .or_else(|| {
+                                p.screen_audio_producer
+                                    .as_ref()
+                                    .filter(|x| x.id().to_string() == producer_id)
+                                    .cloned()
+                            })
                     })
             })
             .ok_or_else(|| anyhow::anyhow!("producer not found"))?;
@@ -976,23 +1021,41 @@ async fn close_producer(
     let id = peer_id
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("join required"))?;
-    let closed = {
+    let (closed_screen, closed_screen_audio) = {
         let peer = guard
             .peers
             .get_mut(id)
             .ok_or_else(|| anyhow::anyhow!("peer not found"))?;
         if peer.screen_producer.as_ref().map(|p| p.id().to_string()) == Some(producer_id.clone()) {
             peer.screen_producer.take();
-            true
+            (true, false)
+        } else if peer
+            .screen_audio_producer
+            .as_ref()
+            .map(|p| p.id().to_string())
+            == Some(producer_id.clone())
+        {
+            peer.screen_audio_producer.take();
+            (false, true)
         } else {
-            false
+            (false, false)
         }
     };
-    if closed {
+    if closed_screen {
         broadcast_except(
             &guard,
             id,
             ServerEvent::ScreenProducerStopped {
+                peer_id: id.clone(),
+                producer_id: producer_id.clone(),
+            },
+        );
+    }
+    if closed_screen_audio {
+        broadcast_except(
+            &guard,
+            id,
+            ServerEvent::ScreenAudioProducerStopped {
                 peer_id: id.clone(),
                 producer_id,
             },
@@ -1024,6 +1087,18 @@ async fn cleanup_peer(room: &Arc<Mutex<Room>>, id: &str) {
                 &guard,
                 id,
                 ServerEvent::ScreenProducerStopped {
+                    peer_id: id.to_owned(),
+                    producer_id: pid,
+                },
+            );
+        }
+        if let Some(producer) = p.screen_audio_producer.take() {
+            let pid = producer.id().to_string();
+            drop(producer);
+            broadcast_except(
+                &guard,
+                id,
+                ServerEvent::ScreenAudioProducerStopped {
                     peer_id: id.to_owned(),
                     producer_id: pid,
                 },

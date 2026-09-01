@@ -29,7 +29,7 @@ import { createEventSound, type EventSound } from "./event-sounds";
 import "./style.css";
 import "./update.css";
 
-const CLIENT_VERSION = "0.3.18";
+const CLIENT_VERSION = "0.3.19";
 
 type Request = { requestId: string; type: string; [key: string]: unknown };
 type ServerMessage = {
@@ -122,7 +122,9 @@ const HEARTBEAT_MS = 20_000,
   CHAT_PAGE_SIZE = 15,
   RECONNECT_DELAYS = [1_000, 2_000, 5_000, 10_000],
   SPEAKING_THRESHOLD = 0.025,
-  SPEAKING_HANGOVER_MS = 300;
+  SPEAKING_HANGOVER_MS = 300,
+  ECHO_GUARD_REMOTE_THRESHOLD = 0.003,
+  ECHO_GUARD_HANGOVER_MS = 900;
 const isTauri = "__TAURI_INTERNALS__" in window;
 const app = document.querySelector<HTMLDivElement>("#app")!;
 const diagnosticLines: string[] = [];
@@ -278,7 +280,8 @@ const pending = new Map<
   producerPeers = new Map<string, string>(),
   screenProducerPeers = new Map<string, string>(),
   screenAudioProducerPeers = new Map<string, string>(),
-  speakingUntil = new Map<string, number>();
+  speakingUntil = new Map<string, number>(),
+  remoteAudioLevels = new Map<string, number>();
 let screenStream: MediaStream | undefined,
   screenProducer: MediasoupTypes.Producer | undefined,
   screenAudioProducer: MediasoupTypes.Producer | undefined;
@@ -459,8 +462,7 @@ function setParticipantVolume(peerId: string, value: number) {
     "biclex-participant-volumes",
     JSON.stringify(participantVolumes),
   );
-  for (const remote of remoteAudio.values())
-    if (remote.peerId === peerId) remote.audio.volume = value / 100;
+  applyEchoGuard(performance.now());
 }
 async function setNoiseMode(mode: NoiseMode) {
   if (mode === noiseMode || joining) return;
@@ -1265,6 +1267,33 @@ function setSpeaking(peerId: string, level: number) {
     .querySelector(`[data-peer="${CSS.escape(peerId)}"]`)
     ?.classList.toggle("speaking", (speakingUntil.get(peerId) ?? 0) > now);
 }
+let localEchoGuardUntil = 0;
+let echoGuardActive = new Set<string>();
+function applyEchoGuard(now: number) {
+  const localVoiceRecent = localEchoGuardUntil > now;
+  const nextActive = new Set<string>();
+  for (const remote of remoteAudio.values()) {
+    const baseVolume = participantVolume(remote.peerId) / 100;
+    const returningAudio =
+      localVoiceRecent &&
+      (remoteAudioLevels.get(remote.peerId) ?? 0) >=
+        ECHO_GUARD_REMOTE_THRESHOLD;
+    if (returningAudio) nextActive.add(remote.peerId);
+    const targetVolume = returningAudio ? 0 : baseVolume;
+    // Cut a detected return immediately, but restore the participant's saved
+    // volume gradually so the conference audio does not click or jump.
+    remote.audio.volume =
+      targetVolume < remote.audio.volume
+        ? targetVolume
+        : Math.min(
+            targetVolume,
+            remote.audio.volume + Math.max(0.08, targetVolume * 0.2),
+          );
+  }
+  for (const peerId of nextActive)
+    if (!echoGuardActive.has(peerId)) diagnosticLog("ECHO GUARD ACTIVE", peerId);
+  echoGuardActive = nextActive;
+}
 async function audioLevel(stats: RTCStatsReport) {
   for (const r of stats.values()) {
     const v = (r as unknown as { audioLevel?: unknown }).audioLevel;
@@ -1276,20 +1305,33 @@ function startSpeaking() {
   if (statsTimer !== undefined) return;
   statsTimer = window.setInterval(() => {
     void (async () => {
-      if (microphoneProducer)
-        setSpeaking(
-          "self",
-          await audioLevel(await microphoneProducer.getStats()),
-        );
-      for (const i of remoteAudio.values())
-        setSpeaking(i.peerId, await audioLevel(await i.consumer.getStats()));
+      const now = performance.now();
+      if (microphoneProducer) {
+        const localLevel = await audioLevel(await microphoneProducer.getStats());
+        setSpeaking("self", localLevel);
+        if (localLevel >= SPEAKING_THRESHOLD)
+          localEchoGuardUntil = now + ECHO_GUARD_HANGOVER_MS;
+      }
+      await Promise.all(
+        [...remoteAudio.values()].map(async (remote) => {
+          const level = await audioLevel(await remote.consumer.getStats());
+          remoteAudioLevels.set(remote.peerId, level);
+          setSpeaking(remote.peerId, level);
+        }),
+      );
+      applyEchoGuard(performance.now());
     })();
-  }, 150);
+  }, 100);
 }
 function stopSpeaking() {
   if (statsTimer !== undefined) window.clearInterval(statsTimer);
   statsTimer = undefined;
   speakingUntil.clear();
+  remoteAudioLevels.clear();
+  localEchoGuardUntil = 0;
+  echoGuardActive.clear();
+  for (const remote of remoteAudio.values())
+    remote.audio.volume = participantVolume(remote.peerId) / 100;
 }
 function scheduleReconnect() {
   if (intentionalDisconnect || reconnectTimer !== undefined) return;
@@ -1775,6 +1817,8 @@ function removeRemote(id: string) {
   i?.audio.pause();
   if (i) i.audio.srcObject = null;
   remoteAudio.delete(id);
+  if (i && ![...remoteAudio.values()].some((remote) => remote.peerId === i.peerId))
+    remoteAudioLevels.delete(i.peerId);
   producerPeers.delete(id);
 }
 function removeScreen(id: string, ownerOverride = "") {

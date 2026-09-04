@@ -33,7 +33,7 @@ import { createEventSound, type EventSound } from "./event-sounds";
 import "./style.css";
 import "./update.css";
 
-const CLIENT_VERSION = "0.3.20";
+const CLIENT_VERSION = "0.3.21";
 
 type Request = { requestId: string; type: string; [key: string]: unknown };
 type ServerMessage = {
@@ -72,8 +72,8 @@ type MuteShortcut = {
   display: string;
 };
 const DEFAULT_MUTE_SHORTCUT: MuteShortcut = {
-  accelerator: "Ctrl+Shift+M",
-  display: "Ctrl + Shift + M",
+  accelerator: "Ctrl+Shift+V",
+  display: "Ctrl + Shift + V",
 };
 const MUTE_SHORTCUT_KEY = "biclex-mute-shortcut-v1";
 const SCREEN_PROFILES = {

@@ -33,7 +33,7 @@ import { createEventSound, type EventSound } from "./event-sounds";
 import "./style.css";
 import "./update.css";
 
-const CLIENT_VERSION = "0.3.22";
+const CLIENT_VERSION = "0.3.23";
 
 type Request = { requestId: string; type: string; [key: string]: unknown };
 type ServerMessage = {
@@ -46,6 +46,7 @@ type ServerMessage = {
 type User = {
   peerId: string;
   name: string;
+  muted?: boolean;
   producerId?: string;
   screenProducerId?: string;
   screenAudioProducerId?: string;
@@ -546,13 +547,17 @@ function shortcutFromKeyboardEvent(
 function toggleMute() {
   if (!outgoingTrack) return;
   outgoingTrack.enabled = !outgoingTrack.enabled;
-  void playEventSound(
-    outgoingTrack.enabled ? "microphoneUnmuted" : "microphoneMuted",
-  );
-  muteButton.classList.toggle("muted", !outgoingTrack.enabled);
+  const muted = !outgoingTrack.enabled;
+  void playEventSound(muted ? "microphoneMuted" : "microphoneUnmuted");
+  muteButton.classList.toggle("muted", muted);
   muteButton.innerHTML = outgoingTrack.enabled
     ? `<b>🎤</b><span>${t("mute")}</span>`
     : `<b>🔇</b><span>${t("unmute")}</span>`;
+  updateMuteIndicator("self", muted);
+  if (socket?.readyState === WebSocket.OPEN && ownPeerId)
+    void request("setMuted", { muted }).catch((error) =>
+      diagnosticLog("MUTE STATE SYNC FAILED", String(error)),
+    );
 }
 async function activateMuteShortcut(
   next: MuteShortcut,
@@ -1832,10 +1837,17 @@ async function handleEvent(m: ServerMessage) {
         void subscribeScreen(u.peerId, u.screenProducerId);
     }
   if (m.type === "userJoined") {
-    const u = { peerId: String(m.peerId), name: String(m.name) };
+    const u = {
+      peerId: String(m.peerId),
+      name: String(m.name),
+      muted: Boolean(m.muted),
+    };
     knownUsers.set(u.peerId, u);
     renderUser(u);
     void playEventSound("participantJoined");
+  }
+  if (m.type === "muteStateChanged") {
+    updateMuteIndicator(String(m.peerId), Boolean(m.muted));
   }
   if (m.type === "userLeft") {
     const peer = String(m.peerId);
@@ -2098,6 +2110,14 @@ function updateScreenIndicator(peerId: string, active: boolean) {
       }
     : null;
 }
+function updateMuteIndicator(peerId: string, muted: boolean) {
+  const participant = knownUsers.get(peerId);
+  if (participant) participant.muted = muted;
+  const indicator = document.querySelector<HTMLElement>(
+    `[data-peer="${CSS.escape(peerId)}"] .mute-indicator`,
+  );
+  if (indicator) indicator.hidden = !muted;
+}
 async function openScreen(peerId: string) {
   const ownScreen = peerId === "self";
   const producerId = ownScreen
@@ -2220,12 +2240,16 @@ function initials(name: string) {
     .toUpperCase();
 }
 function renderUser(u: User) {
-  if (document.querySelector(`[data-peer="${CSS.escape(u.peerId)}"]`)) return;
+  if (document.querySelector(`[data-peer="${CSS.escape(u.peerId)}"]`)) {
+    updateMuteIndicator(u.peerId, Boolean(u.muted));
+    if (u.screenProducerId) updateScreenIndicator(u.peerId, true);
+    return;
+  }
   const item = document.createElement("li");
   item.dataset.peer = u.peerId;
   const self = u.peerId === "self";
   item.classList.toggle("self", self);
-  item.innerHTML = `<span class="avatar">${initials(u.name)}</span><div class="participant-info"><span class="participant-name"></span><label class="participant-volume" ${self ? "hidden" : ""}><span>🔊</span><input type="range" min="0" max="100" step="5" value="100" aria-label="${t("participantVolume")}" /><output>100%</output></label></div><button class="screen-icon" type="button" aria-label="${t("openScreen")}" hidden></button>`;
+  item.innerHTML = `<span class="avatar">${initials(u.name)}</span><div class="participant-info"><span class="participant-title"><span class="participant-name"></span><span class="mute-indicator" role="img" aria-label="${t("participantMuted")}" title="${t("participantMuted")}" hidden>🔇</span></span><label class="participant-volume" ${self ? "hidden" : ""}><span>🔊</span><input type="range" min="0" max="100" step="5" value="100" aria-label="${t("participantVolume")}" /><output>100%</output></label></div><button class="screen-icon" type="button" aria-label="${t("openScreen")}" hidden></button>`;
   item.querySelector(".participant-name")!.textContent = u.name;
   if (!self) {
     const slider = item.querySelector<HTMLInputElement>(
@@ -2244,6 +2268,7 @@ function renderUser(u: User) {
     };
   }
   users.append(item);
+  updateMuteIndicator(u.peerId, Boolean(u.muted));
   if (u.screenProducerId) updateScreenIndicator(u.peerId, true);
 }
 function removeUser(peer: string) {

@@ -256,11 +256,25 @@ button:disabled {
   font-size: 0.78rem;
   font-weight: 700;
 }
+.participant-title {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 6px;
+}
 .participant-name {
-  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.mute-indicator {
+  flex: 0 0 auto;
+  color: #f6a9a9;
+  font-size: 0.82rem;
+  filter: saturate(0.85);
+}
+.mute-indicator[hidden] {
+  display: none;
 }
 .participant-info {
   display: grid;

@@ -1,6 +1,6 @@
 services:
   server:
-    image: hub.biclex.ru/biclex-hub-server:0.3.18
+    image: hub.biclex.ru/biclex-hub-server:0.3.23
     pull_policy: always
     container_name: biclex-hub-server
     restart: unless-stopped

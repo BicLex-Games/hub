@@ -70,6 +70,9 @@ enum ClientCommand {
         before: Option<String>,
         limit: Option<usize>,
     },
+    SetMuted {
+        muted: bool,
+    },
     Leave,
     Ping,
 }
@@ -101,6 +104,7 @@ enum ServerEvent {
     UserJoined {
         peer_id: String,
         name: String,
+        muted: bool,
     },
     UserLeft {
         peer_id: String,
@@ -145,6 +149,10 @@ enum ServerEvent {
         peer_id: String,
         producer_id: String,
     },
+    MuteStateChanged {
+        peer_id: String,
+        muted: bool,
+    },
     ChatHistory {
         messages: Vec<ChatMessage>,
         has_more: bool,
@@ -163,6 +171,7 @@ enum ServerEvent {
 struct UserInfo {
     peer_id: String,
     name: String,
+    muted: bool,
     producer_id: Option<String>,
     screen_producer_id: Option<String>,
     screen_audio_producer_id: Option<String>,
@@ -210,6 +219,7 @@ struct ServerEnvelope {
 struct Peer {
     id: String,
     name: String,
+    muted: bool,
     tx: mpsc::UnboundedSender<ServerEnvelope>,
     send_transport: Option<WebRtcTransport>,
     recv_transport: Option<WebRtcTransport>,
@@ -588,6 +598,9 @@ async fn handle_command(
                 ServerEvent::ChatHistory { messages, has_more },
             );
         }
+        ClientCommand::SetMuted { muted } => {
+            set_muted(request_id, room, tx, peer_id, muted).await?
+        }
         ClientCommand::Ping => {
             debug!("Heartbeat ping received; pong sent");
             reply(tx, request_id, ServerEvent::Pong)
@@ -634,6 +647,7 @@ async fn join(
         .map(|p| UserInfo {
             peer_id: p.id.clone(),
             name: p.name.clone(),
+            muted: p.muted,
             producer_id: p.producer.as_ref().map(|x| x.id().to_string()),
             screen_producer_id: p.screen_producer.as_ref().map(|x| x.id().to_string()),
             screen_audio_producer_id: p.screen_audio_producer.as_ref().map(|x| x.id().to_string()),
@@ -644,6 +658,7 @@ async fn join(
         Peer {
             id: id.clone(),
             name: name.clone(),
+            muted: false,
             tx: tx.clone(),
             send_transport: None,
             recv_transport: None,
@@ -674,8 +689,38 @@ async fn join(
         ServerEvent::UserJoined {
             peer_id: id.clone(),
             name,
+            muted: false,
         },
     );
+    Ok(())
+}
+
+async fn set_muted(
+    request_id: Option<String>,
+    room: &Arc<Mutex<Room>>,
+    tx: &mpsc::UnboundedSender<ServerEnvelope>,
+    peer_id: &Option<String>,
+    muted: bool,
+) -> anyhow::Result<()> {
+    let mut guard = room.lock().await;
+    let id = peer_id
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("join required"))?
+        .clone();
+    let participant = guard
+        .peers
+        .get_mut(&id)
+        .ok_or_else(|| anyhow::anyhow!("peer not found"))?;
+    participant.muted = muted;
+    broadcast_except(
+        &guard,
+        &id,
+        ServerEvent::MuteStateChanged {
+            peer_id: id.clone(),
+            muted,
+        },
+    );
+    reply(tx, request_id, ServerEvent::Pong);
     Ok(())
 }
 

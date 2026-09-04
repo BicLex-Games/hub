@@ -11,6 +11,7 @@ BicLex Hub is a self-hosted team space for low-latency voice, screen sharing, pe
 - low-latency group voice powered by WebRTC and mediasoup;
 - optional AI microphone noise suppression;
 - system-wide mute shortcut (`Ctrl+Shift+V` by default) with in-app rebinding;
+- distinct local sound cues when muting and unmuting the microphone;
 - per-participant volume controls and output-device selection;
 - Full HD, 1440p, and up-to-4K screen sharing;
 - persistent room chat with image and file attachments;

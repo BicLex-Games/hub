@@ -3,7 +3,9 @@ export type EventSound =
   | "participantLeft"
   | "screenStarted"
   | "screenStopped"
-  | "messageReceived";
+  | "messageReceived"
+  | "microphoneMuted"
+  | "microphoneUnmuted";
 
 type Note = {
   frequency: number;
@@ -37,6 +39,14 @@ const CUES: Record<EventSound, Note[]> = {
   messageReceived: [
     { frequency: 783.99, start: 0, duration: 0.09, gain: 0.14 },
     { frequency: 1046.5, start: 0.07, duration: 0.16, gain: 0.16 },
+  ],
+  microphoneMuted: [
+    { frequency: 659.25, start: 0, duration: 0.08, gain: 0.18 },
+    { frequency: 440, start: 0.065, duration: 0.15, gain: 0.2 },
+  ],
+  microphoneUnmuted: [
+    { frequency: 440, start: 0, duration: 0.08, gain: 0.18 },
+    { frequency: 659.25, start: 0.065, duration: 0.15, gain: 0.2 },
   ],
 };
 

@@ -33,7 +33,7 @@ import { createEventSound, type EventSound } from "./event-sounds";
 import "./style.css";
 import "./update.css";
 
-const CLIENT_VERSION = "0.3.21";
+const CLIENT_VERSION = "0.3.22";
 
 type Request = { requestId: string; type: string; [key: string]: unknown };
 type ServerMessage = {
@@ -546,6 +546,9 @@ function shortcutFromKeyboardEvent(
 function toggleMute() {
   if (!outgoingTrack) return;
   outgoingTrack.enabled = !outgoingTrack.enabled;
+  void playEventSound(
+    outgoingTrack.enabled ? "microphoneUnmuted" : "microphoneMuted",
+  );
   muteButton.classList.toggle("muted", !outgoingTrack.enabled);
   muteButton.innerHTML = outgoingTrack.enabled
     ? `<b>🎤</b><span>${t("mute")}</span>`

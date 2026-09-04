@@ -4,6 +4,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { check } from "@tauri-apps/plugin-updater";
 import { save } from "@tauri-apps/plugin-dialog";
 import { relaunch } from "@tauri-apps/plugin-process";
+import {
+  register as registerGlobalShortcut,
+  unregister as unregisterGlobalShortcut,
+} from "@tauri-apps/plugin-global-shortcut";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import {
   currentMonitor,
@@ -29,7 +33,7 @@ import { createEventSound, type EventSound } from "./event-sounds";
 import "./style.css";
 import "./update.css";
 
-const CLIENT_VERSION = "0.3.19";
+const CLIENT_VERSION = "0.3.20";
 
 type Request = { requestId: string; type: string; [key: string]: unknown };
 type ServerMessage = {
@@ -63,6 +67,15 @@ type ChatMessage = {
 };
 type NoiseMode = "off" | "ai";
 type ScreenQuality = "medium" | "high" | "maximum";
+type MuteShortcut = {
+  accelerator: string;
+  display: string;
+};
+const DEFAULT_MUTE_SHORTCUT: MuteShortcut = {
+  accelerator: "Ctrl+Shift+M",
+  display: "Ctrl + Shift + M",
+};
+const MUTE_SHORTCUT_KEY = "biclex-mute-shortcut-v1";
 const SCREEN_PROFILES = {
   medium: {
     width: 1920,
@@ -126,6 +139,8 @@ const HEARTBEAT_MS = 20_000,
   ECHO_GUARD_REMOTE_THRESHOLD = 0.003,
   ECHO_GUARD_HANGOVER_MS = 900;
 const isTauri = "__TAURI_INTERNALS__" in window;
+const isMainView =
+  new URLSearchParams(location.search).get("screenViewer") !== "1";
 const app = document.querySelector<HTMLDivElement>("#app")!;
 const diagnosticLines: string[] = [];
 function diagnosticLog(...parts: unknown[]) {
@@ -159,7 +174,7 @@ app.innerHTML = `<main class="app-shell">
   <section id="room-page" class="page room-page" hidden>
     <header class="room-header"><div class="room-brand"><img src="${teamLogoUrl}" alt="" /><strong>BicLex Hub</strong></div><span id="connection-state" class="connection-state">${t("online")}</span></header>
     <div class="room-main"><div><h2>${t("participants")}</h2></div><div id="screens" class="screens" hidden></div><ul id="users" class="participants"></ul></div>
-    <div class="room-bottom"><div class="media-settings"><div class="suppression"><span>${t("noiseSuppression")}</span><div class="noise" style="grid-template-columns:repeat(2,1fr)"><button data-noise="off">Off</button><button data-noise="ai">✨ AI</button></div></div><label class="screen-quality">${t("screenQuality")}<select id="screen-quality"><option value="medium">${t("qualityMedium")}</option><option value="high">${t("qualityHigh")}</option><option value="maximum">${t("qualityMaximum")}</option></select></label></div><div class="controls"><button id="mute" class="control mute" disabled><b>🎤</b><span>${t("mute")}</span></button><button id="screen-share" class="control screen-share"><b>🖥</b><span>${t("screenShare")}</span></button><button id="leave" class="control leave" disabled><b>🚪</b><span>${t("leave")}</span></button></div></div>
+    <div class="room-bottom"><div class="media-settings"><div class="suppression"><span>${t("noiseSuppression")}</span><div class="noise" style="grid-template-columns:repeat(2,1fr)"><button data-noise="off">Off</button><button data-noise="ai">✨ AI</button></div></div><label class="screen-quality">${t("screenQuality")}<select id="screen-quality"><option value="medium">${t("qualityMedium")}</option><option value="high">${t("qualityHigh")}</option><option value="maximum">${t("qualityMaximum")}</option></select></label></div><div class="controls"><div class="mute-control"><div class="mute-shortcut-settings"><kbd id="mute-shortcut"></kbd><button id="edit-mute-shortcut" type="button" aria-label="${t("editMuteShortcut")}" title="${t("editMuteShortcut")}">✎</button></div><button id="mute" class="control mute" disabled><b>🎤</b><span>${t("mute")}</span></button></div><button id="screen-share" class="control screen-share"><b>🖥</b><span>${t("screenShare")}</span></button><button id="leave" class="control leave" disabled><b>🚪</b><span>${t("leave")}</span></button></div></div>
   </section>
   <section id="server-settings-page" class="page server-settings-page" hidden></section>
 </main>`;
@@ -180,6 +195,10 @@ const setupPage = document.querySelector<HTMLElement>("#setup-page")!,
   joinButton = document.querySelector<HTMLButtonElement>("#join")!,
   leaveButton = document.querySelector<HTMLButtonElement>("#leave")!,
   muteButton = document.querySelector<HTMLButtonElement>("#mute")!,
+  muteShortcutLabel = document.querySelector<HTMLElement>("#mute-shortcut")!,
+  editMuteShortcutButton = document.querySelector<HTMLButtonElement>(
+    "#edit-mute-shortcut",
+  )!,
   screenButton = document.querySelector<HTMLButtonElement>("#screen-share")!,
   screenQualitySelect =
     document.querySelector<HTMLSelectElement>("#screen-quality")!,
@@ -294,6 +313,27 @@ let noiseMode =
   selectedOutputDeviceId = localStorage.getItem("biclex-output-device") ?? "",
   localSignaling = false,
   turnIceServers: RTCIceServer[] = [];
+function loadMuteShortcut(): MuteShortcut {
+  try {
+    const saved = JSON.parse(
+      localStorage.getItem(MUTE_SHORTCUT_KEY) ?? "null",
+    ) as Partial<MuteShortcut> | null;
+    if (saved?.accelerator && saved.display)
+      return {
+        accelerator: saved.accelerator,
+        display: saved.display,
+      };
+  } catch {
+    // Ignore an invalid saved value and restore the familiar default.
+  }
+  return DEFAULT_MUTE_SHORTCUT;
+}
+let muteShortcut = loadMuteShortcut();
+let registeredMuteShortcut: string | undefined;
+let capturingMuteShortcut = false;
+let capturedMuteShortcut: MuteShortcut | undefined;
+const capturedKeys = new Set<string>();
+muteShortcutLabel.textContent = muteShortcut.display;
 nameInput.value = localStorage.getItem("biclex-username") ?? "";
 languageSelect.value = getLanguage();
 languageSelect.onchange = () => {
@@ -445,6 +485,201 @@ function updateNoiseUi() {
     b.classList.toggle("selected", b.dataset.noise === noiseMode),
   );
 }
+const shortcutKeyNames: Record<
+  string,
+  { accelerator: string; display: string }
+> = {
+  Space: { accelerator: "Space", display: "Space" },
+  Enter: { accelerator: "Enter", display: "Enter" },
+  Tab: { accelerator: "Tab", display: "Tab" },
+  Backspace: { accelerator: "Backspace", display: "Backspace" },
+  Delete: { accelerator: "Delete", display: "Delete" },
+  Insert: { accelerator: "Insert", display: "Insert" },
+  Home: { accelerator: "Home", display: "Home" },
+  End: { accelerator: "End", display: "End" },
+  PageUp: { accelerator: "PageUp", display: "Page Up" },
+  PageDown: { accelerator: "PageDown", display: "Page Down" },
+  ArrowUp: { accelerator: "Up", display: "↑" },
+  ArrowDown: { accelerator: "Down", display: "↓" },
+  ArrowLeft: { accelerator: "Left", display: "←" },
+  ArrowRight: { accelerator: "Right", display: "→" },
+};
+function shortcutFromKeyboardEvent(
+  event: KeyboardEvent,
+): MuteShortcut | undefined {
+  let key: { accelerator: string; display: string } | undefined;
+  if (/^Key[A-Z]$/.test(event.code)) {
+    const value = event.code.slice(3);
+    key = { accelerator: value, display: value };
+  } else if (/^Digit[0-9]$/.test(event.code)) {
+    const value = event.code.slice(5);
+    key = { accelerator: value, display: value };
+  } else if (/^F(?:[1-9]|1[0-9]|2[0-4])$/.test(event.code)) {
+    key = { accelerator: event.code, display: event.code };
+  } else key = shortcutKeyNames[event.code];
+  if (!key) return undefined;
+  const accelerator: string[] = [];
+  const display: string[] = [];
+  if (event.ctrlKey) {
+    accelerator.push("Ctrl");
+    display.push("Ctrl");
+  }
+  if (event.altKey) {
+    accelerator.push("Alt");
+    display.push("Alt");
+  }
+  if (event.shiftKey) {
+    accelerator.push("Shift");
+    display.push("Shift");
+  }
+  if (event.metaKey) {
+    accelerator.push("Super");
+    display.push("Win");
+  }
+  accelerator.push(key.accelerator);
+  display.push(key.display);
+  return {
+    accelerator: accelerator.join("+"),
+    display: display.join(" + "),
+  };
+}
+function toggleMute() {
+  if (!outgoingTrack) return;
+  outgoingTrack.enabled = !outgoingTrack.enabled;
+  muteButton.classList.toggle("muted", !outgoingTrack.enabled);
+  muteButton.innerHTML = outgoingTrack.enabled
+    ? `<b>🎤</b><span>${t("mute")}</span>`
+    : `<b>🔇</b><span>${t("unmute")}</span>`;
+}
+async function activateMuteShortcut(
+  next: MuteShortcut,
+  persist: boolean,
+): Promise<boolean> {
+  const previous = registeredMuteShortcut;
+  if (isTauri && previous) {
+    try {
+      await unregisterGlobalShortcut(previous);
+    } catch (error) {
+      diagnosticLog("MUTE SHORTCUT UNREGISTER FAILED", String(error));
+    }
+    registeredMuteShortcut = undefined;
+  }
+  if (isTauri) {
+    try {
+      await registerGlobalShortcut(next.accelerator, (event) => {
+        if (event.state === "Pressed") toggleMute();
+      });
+      registeredMuteShortcut = next.accelerator;
+    } catch (error) {
+      diagnosticLog(
+        "MUTE SHORTCUT REGISTER FAILED",
+        next.accelerator,
+        String(error),
+      );
+      if (previous) {
+        try {
+          await registerGlobalShortcut(previous, (event) => {
+            if (event.state === "Pressed") toggleMute();
+          });
+          registeredMuteShortcut = previous;
+        } catch (restoreError) {
+          diagnosticLog("MUTE SHORTCUT RESTORE FAILED", String(restoreError));
+        }
+      }
+      muteShortcutLabel.classList.add("error");
+      muteShortcutLabel.textContent = t("muteShortcutUnavailable");
+      muteShortcutLabel.title = t("muteShortcutUnavailable");
+      window.setTimeout(() => {
+        muteShortcutLabel.classList.remove("error");
+        muteShortcutLabel.textContent = muteShortcut.display;
+        muteShortcutLabel.title = "";
+      }, 1800);
+      return false;
+    }
+  }
+  muteShortcut = next;
+  muteShortcutLabel.textContent = next.display;
+  muteShortcutLabel.title = "";
+  if (persist) localStorage.setItem(MUTE_SHORTCUT_KEY, JSON.stringify(next));
+  diagnosticLog("MUTE SHORTCUT ACTIVE", next.accelerator);
+  return true;
+}
+async function startMuteShortcutCapture() {
+  if (capturingMuteShortcut) return;
+  if (isTauri && registeredMuteShortcut) {
+    try {
+      await unregisterGlobalShortcut(registeredMuteShortcut);
+      registeredMuteShortcut = undefined;
+    } catch (error) {
+      diagnosticLog("MUTE SHORTCUT CAPTURE UNREGISTER FAILED", String(error));
+    }
+  }
+  capturingMuteShortcut = true;
+  capturedMuteShortcut = undefined;
+  capturedKeys.clear();
+  muteShortcutLabel.textContent = t("pressMuteShortcut");
+  muteShortcutLabel.classList.add("recording");
+  editMuteShortcutButton.classList.add("recording");
+  editMuteShortcutButton.focus();
+}
+async function stopMuteShortcutCapture(saveCaptured: boolean) {
+  if (!capturingMuteShortcut) return;
+  const next = capturedMuteShortcut;
+  capturingMuteShortcut = false;
+  capturedMuteShortcut = undefined;
+  capturedKeys.clear();
+  muteShortcutLabel.classList.remove("recording");
+  editMuteShortcutButton.classList.remove("recording");
+  if (saveCaptured && next) await activateMuteShortcut(next, true);
+  else await activateMuteShortcut(muteShortcut, false);
+}
+window.addEventListener(
+  "keydown",
+  (event) => {
+    if (capturingMuteShortcut) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (event.code === "Escape") {
+        void stopMuteShortcutCapture(false);
+        return;
+      }
+      capturedKeys.add(event.code);
+      const shortcut = shortcutFromKeyboardEvent(event);
+      if (shortcut) {
+        capturedMuteShortcut = shortcut;
+        muteShortcutLabel.textContent = shortcut.display;
+      }
+      return;
+    }
+    if (
+      !isTauri &&
+      shortcutFromKeyboardEvent(event)?.accelerator === muteShortcut.accelerator
+    ) {
+      event.preventDefault();
+      toggleMute();
+    }
+  },
+  true,
+);
+window.addEventListener(
+  "keyup",
+  (event) => {
+    if (!capturingMuteShortcut) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    capturedKeys.delete(event.code);
+    if (capturedMuteShortcut && capturedKeys.size === 0)
+      void stopMuteShortcutCapture(true);
+  },
+  true,
+);
+window.addEventListener("blur", () => {
+  if (capturingMuteShortcut) void stopMuteShortcutCapture(false);
+});
+editMuteShortcutButton.onclick = () => {
+  void startMuteShortcutCapture();
+};
+if (isMainView) void activateMuteShortcut(muteShortcut, false);
 function volumeKey(name: string) {
   return name.trim().toLocaleLowerCase();
 }
@@ -1291,7 +1526,8 @@ function applyEchoGuard(now: number) {
           );
   }
   for (const peerId of nextActive)
-    if (!echoGuardActive.has(peerId)) diagnosticLog("ECHO GUARD ACTIVE", peerId);
+    if (!echoGuardActive.has(peerId))
+      diagnosticLog("ECHO GUARD ACTIVE", peerId);
   echoGuardActive = nextActive;
 }
 async function audioLevel(stats: RTCStatsReport) {
@@ -1307,7 +1543,9 @@ function startSpeaking() {
     void (async () => {
       const now = performance.now();
       if (microphoneProducer) {
-        const localLevel = await audioLevel(await microphoneProducer.getStats());
+        const localLevel = await audioLevel(
+          await microphoneProducer.getStats(),
+        );
         setSpeaking("self", localLevel);
         if (localLevel >= SPEAKING_THRESHOLD)
           localEchoGuardUntil = now + ECHO_GUARD_HANGOVER_MS;
@@ -1817,7 +2055,10 @@ function removeRemote(id: string) {
   i?.audio.pause();
   if (i) i.audio.srcObject = null;
   remoteAudio.delete(id);
-  if (i && ![...remoteAudio.values()].some((remote) => remote.peerId === i.peerId))
+  if (
+    i &&
+    ![...remoteAudio.values()].some((remote) => remote.peerId === i.peerId)
+  )
     remoteAudioLevels.delete(i.peerId);
   producerPeers.delete(id);
 }
@@ -1869,9 +2110,8 @@ async function openScreen(peerId: string) {
   if (!videoStream) return;
   const audioTrack = ownScreen
     ? screenStream?.getAudioTracks()[0]
-    : [...remoteScreenAudio.values()].find(
-        (item) => item.peerId === peerId,
-      )?.consumer.track;
+    : [...remoteScreenAudio.values()].find((item) => item.peerId === peerId)
+        ?.consumer.track;
   const sourceStream = new MediaStream([
     ...videoStream.getVideoTracks(),
     ...(audioTrack ? [audioTrack] : []),
@@ -2045,14 +2285,7 @@ outputDevice.onchange = () => {
   if (monitorAudio) void applyAudioOutput(monitorAudio);
   for (const { audio } of remoteAudio.values()) void applyAudioOutput(audio);
 };
-muteButton.onclick = () => {
-  if (!outgoingTrack) return;
-  outgoingTrack.enabled = !outgoingTrack.enabled;
-  muteButton.classList.toggle("muted", !outgoingTrack.enabled);
-  muteButton.innerHTML = outgoingTrack.enabled
-    ? "<b>🎤</b><span>Mute</span>"
-    : "<b>🔇</b><span>Unmute</span>";
-};
+muteButton.onclick = toggleMute;
 screenButton.onclick = async () => {
   if (!sendTransport) return;
   if (screenProducer) {
@@ -2106,9 +2339,7 @@ screenButton.onclick = async () => {
       audioTrack.onended = () => {
         const producerId = screenAudioProducer?.id;
         if (producerId)
-          void request("closeProducer", { producerId }).catch(
-            () => undefined,
-          );
+          void request("closeProducer", { producerId }).catch(() => undefined);
         screenAudioProducer?.close();
         screenAudioProducer = undefined;
       };
@@ -2313,8 +2544,7 @@ function createSendTransport(m: ServerMessage) {
     request("produce", {
       kind,
       rtpParameters,
-      source:
-        typeof appData.source === "string" ? appData.source : undefined,
+      source: typeof appData.source === "string" ? appData.source : undefined,
     })
       .then(ensureOk)
       .then((r) => cb({ id: String(r.producerId) }))
@@ -2347,7 +2577,9 @@ if (viewerParams.get("screenViewer") === "1") {
     const pendingCandidates: RTCIceCandidateInit[] = [];
     let offerReceived = false;
     viewerRtc.ontrack = (event) => {
-      if (!viewerStream.getTracks().some((track) => track.id === event.track.id))
+      if (
+        !viewerStream.getTracks().some((track) => track.id === event.track.id)
+      )
         viewerStream.addTrack(event.track);
       void viewerVideo.play().catch(() => undefined);
       const outputDeviceId = localStorage.getItem("biclex-output-device") ?? "";

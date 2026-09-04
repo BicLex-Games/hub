@@ -1,6 +1,6 @@
 [package]
 name = "biclex-hub"
-version = "0.3.19"
+version = "0.3.20"
 edition = "2021"
 
 [build-dependencies]
@@ -15,6 +15,7 @@ serde_json = "1"
 serde = { version = "1", features = ["derive"] }
 uuid = { version = "1", features = ["v4"] }
 reqwest = { version = "0.13", default-features = false, features = ["json", "multipart", "rustls"] }
+tauri-plugin-global-shortcut = "2"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]

@@ -570,7 +570,67 @@ button:disabled {
 .controls {
   display: grid;
   grid-template-columns: 1fr 1fr;
+  align-items: end;
   gap: 12px;
+}
+.mute-control {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+.mute-shortcut-settings {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+.mute-shortcut-settings kbd {
+  min-width: 0;
+  overflow: hidden;
+  padding: 3px 7px;
+  border: 1px solid #3a4d6b;
+  border-radius: 6px;
+  color: #aebed4;
+  background: #111c30;
+  font:
+    600 0.62rem/1.2 Inter,
+    "Segoe UI",
+    sans-serif;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mute-shortcut-settings kbd.recording {
+  border-color: #4b9cff;
+  color: #dcecff;
+  box-shadow: 0 0 0 2px #3284ed24;
+}
+.mute-shortcut-settings kbd.error {
+  border-color: #d65e66;
+  color: #fecaca;
+}
+.mute-shortcut-settings button {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid #3a4d6b;
+  border-radius: 6px;
+  color: #9fb2cd;
+  background: #152239;
+  font-size: 0.82rem;
+  line-height: 1;
+}
+.mute-shortcut-settings button:hover,
+.mute-shortcut-settings button.recording {
+  border-color: #4b9cff;
+  color: white;
+  background: #1d4f8f;
+}
+.mute-control .control {
+  width: 100%;
 }
 .control {
   display: grid;

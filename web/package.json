@@ -1,11 +1,12 @@
 {
   "name": "biclex-hub-client",
   "private": true,
-  "version": "0.3.23",
+  "version": "0.3.24",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "test": "node --test scripts/audio-regression.test.mjs",
     "tauri": "tauri"
   },
   "dependencies": {

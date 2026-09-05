@@ -33,7 +33,7 @@ import { createEventSound, type EventSound } from "./event-sounds";
 import "./style.css";
 import "./update.css";
 
-const CLIENT_VERSION = "0.3.23";
+const CLIENT_VERSION = "0.3.24";
 
 type Request = { requestId: string; type: string; [key: string]: unknown };
 type ServerMessage = {
@@ -136,9 +136,7 @@ const HEARTBEAT_MS = 20_000,
   CHAT_PAGE_SIZE = 15,
   RECONNECT_DELAYS = [1_000, 2_000, 5_000, 10_000],
   SPEAKING_THRESHOLD = 0.025,
-  SPEAKING_HANGOVER_MS = 300,
-  ECHO_GUARD_REMOTE_THRESHOLD = 0.003,
-  ECHO_GUARD_HANGOVER_MS = 900;
+  SPEAKING_HANGOVER_MS = 300;
 const isTauri = "__TAURI_INTERNALS__" in window;
 const isMainView =
   new URLSearchParams(location.search).get("screenViewer") !== "1";
@@ -300,8 +298,7 @@ const pending = new Map<
   producerPeers = new Map<string, string>(),
   screenProducerPeers = new Map<string, string>(),
   screenAudioProducerPeers = new Map<string, string>(),
-  speakingUntil = new Map<string, number>(),
-  remoteAudioLevels = new Map<string, number>();
+  speakingUntil = new Map<string, number>();
 let screenStream: MediaStream | undefined,
   screenProducer: MediasoupTypes.Producer | undefined,
   screenAudioProducer: MediasoupTypes.Producer | undefined;
@@ -705,18 +702,20 @@ function setParticipantVolume(peerId: string, value: number) {
     "biclex-participant-volumes",
     JSON.stringify(participantVolumes),
   );
-  applyEchoGuard(performance.now());
+  for (const remote of remoteAudio.values())
+    if (remote.peerId === peerId) remote.audio.volume = value / 100;
 }
+let changingNoiseMode = false;
 async function setNoiseMode(mode: NoiseMode) {
-  if (mode === noiseMode || joining) return;
+  if (mode === noiseMode || joining || changingNoiseMode) return;
   const previous = noiseMode;
-  noiseMode = mode;
-  localStorage.setItem("biclex-noise-mode", mode);
-  updateNoiseUi();
-  if (!microphoneProducer) return;
+  const producer = microphoneProducer;
+  if (!producer) return;
+  changingNoiseMode = true;
+  noiseButtons.forEach((button) => (button.disabled = true));
+  let nextStream: MediaStream | undefined;
+  let nextAi: AiAudio | undefined;
   try {
-    let nextStream: MediaStream | undefined;
-    let nextAi: AiAudio | undefined;
     let nextTrack: MediaStreamTrack;
     if (mode === "ai") {
       nextAi = await createAiAudio();
@@ -725,12 +724,22 @@ async function setNoiseMode(mode: NoiseMode) {
       nextStream = await captureDirect("off");
       nextTrack = nextStream.getAudioTracks()[0];
     }
-    await microphoneProducer.replaceTrack({ track: nextTrack });
+    if (producer !== microphoneProducer || producer.closed) return;
+    nextTrack.enabled = outgoingTrack?.enabled ?? true;
+    await producer.replaceTrack({ track: nextTrack });
+    if (producer !== microphoneProducer || producer.closed) return;
+    // A hotkey can change mute while replaceTrack is awaiting the sender.
+    nextTrack.enabled = outgoingTrack?.enabled ?? true;
     const oldStream = outgoingStream;
     const oldAi = outgoingAi;
     outgoingStream = nextStream;
     outgoingAi = nextAi;
     outgoingTrack = nextTrack;
+    nextStream = undefined;
+    nextAi = undefined;
+    noiseMode = mode;
+    localStorage.setItem("biclex-noise-mode", mode);
+    updateNoiseUi();
     oldStream?.getTracks().forEach((track) => track.stop());
     closeAi(oldAi);
   } catch (error) {
@@ -741,6 +750,11 @@ async function setNoiseMode(mode: NoiseMode) {
       "NOISE MODE FAILED",
       error instanceof Error ? error.message : String(error),
     );
+  } finally {
+    nextStream?.getTracks().forEach((track) => track.stop());
+    closeAi(nextAi);
+    changingNoiseMode = false;
+    noiseButtons.forEach((button) => (button.disabled = false));
   }
 }
 type MicrophoneCaptureProfile = "off" | "ai" | "standard";
@@ -882,6 +896,7 @@ function closeAi(value: AiAudio | undefined) {
   if (!value) return;
   value.node.destroy();
   value.node.disconnect();
+  value.outputTrack.stop();
   value.input.getTracks().forEach((t) => t.stop());
   void value.context.close();
 }
@@ -892,28 +907,28 @@ async function createAiAudio(): Promise<AiAudio> {
       sampleRate: 48_000,
       latencyHint: "interactive",
     });
-  await context.resume();
-  const source = context.createMediaStreamSource(input),
-    destination = context.createMediaStreamDestination();
-  if (context.sampleRate !== 48_000)
-    throw new Error(`GTCRN requires 48000 Hz, got ${context.sampleRate}`);
-  source.channelCount = 1;
-  source.channelCountMode = "explicit";
-  source.channelInterpretation = "speakers";
-  destination.channelCount = 1;
-  destination.channelCountMode = "explicit";
-  destination.channelInterpretation = "speakers";
-  diagnosticLog("AI INPUT SETTINGS", inputTrack.getSettings());
-  diagnosticLog(
-    "AI CONTEXT",
-    `sampleRate=${context.sampleRate}`,
-    `state=${context.state}`,
-    "channels=mono",
-    "frame=768",
-  );
-  context.onstatechange = () =>
-    diagnosticLog("AI CONTEXT STATE", context.state);
   try {
+    await context.resume();
+    const source = context.createMediaStreamSource(input),
+      destination = context.createMediaStreamDestination();
+    if (context.sampleRate !== 48_000)
+      throw new Error(`GTCRN requires 48000 Hz, got ${context.sampleRate}`);
+    source.channelCount = 1;
+    source.channelCountMode = "explicit";
+    source.channelInterpretation = "speakers";
+    destination.channelCount = 1;
+    destination.channelCountMode = "explicit";
+    destination.channelInterpretation = "speakers";
+    diagnosticLog("AI INPUT SETTINGS", inputTrack.getSettings());
+    diagnosticLog(
+      "AI CONTEXT",
+      `sampleRate=${context.sampleRate}`,
+      `state=${context.state}`,
+      "channels=mono",
+      "frame=768",
+    );
+    context.onstatechange = () =>
+      diagnosticLog("AI CONTEXT STATE", context.state);
     const wasmBinary = await loadGtcrn({ url: gtcrnWasmPath });
     await context.audioWorklet.addModule(gtcrnWorkletPath);
     const node = new GtcrnWorkletNode(context, { wasmBinary, maxChannels: 1 });
@@ -926,7 +941,6 @@ async function createAiAudio(): Promise<AiAudio> {
     diagnosticLog("AI OUTPUT SETTINGS", outputTrack.getSettings());
     return { input, inputTrack, outputTrack, context, node };
   } catch (error) {
-    source.disconnect();
     input.getTracks().forEach((t) => t.stop());
     void context.close();
     throw error;
@@ -1510,34 +1524,6 @@ function setSpeaking(peerId: string, level: number) {
     .querySelector(`[data-peer="${CSS.escape(peerId)}"]`)
     ?.classList.toggle("speaking", (speakingUntil.get(peerId) ?? 0) > now);
 }
-let localEchoGuardUntil = 0;
-let echoGuardActive = new Set<string>();
-function applyEchoGuard(now: number) {
-  const localVoiceRecent = localEchoGuardUntil > now;
-  const nextActive = new Set<string>();
-  for (const remote of remoteAudio.values()) {
-    const baseVolume = participantVolume(remote.peerId) / 100;
-    const returningAudio =
-      localVoiceRecent &&
-      (remoteAudioLevels.get(remote.peerId) ?? 0) >=
-        ECHO_GUARD_REMOTE_THRESHOLD;
-    if (returningAudio) nextActive.add(remote.peerId);
-    const targetVolume = returningAudio ? 0 : baseVolume;
-    // Cut a detected return immediately, but restore the participant's saved
-    // volume gradually so the conference audio does not click or jump.
-    remote.audio.volume =
-      targetVolume < remote.audio.volume
-        ? targetVolume
-        : Math.min(
-            targetVolume,
-            remote.audio.volume + Math.max(0.08, targetVolume * 0.2),
-          );
-  }
-  for (const peerId of nextActive)
-    if (!echoGuardActive.has(peerId))
-      diagnosticLog("ECHO GUARD ACTIVE", peerId);
-  echoGuardActive = nextActive;
-}
 async function audioLevel(stats: RTCStatsReport) {
   for (const r of stats.values()) {
     const v = (r as unknown as { audioLevel?: unknown }).audioLevel;
@@ -1547,37 +1533,36 @@ async function audioLevel(stats: RTCStatsReport) {
 }
 function startSpeaking() {
   if (statsTimer !== undefined) return;
+  let sampling = false;
   statsTimer = window.setInterval(() => {
+    if (sampling) return;
+    sampling = true;
     void (async () => {
-      const now = performance.now();
       if (microphoneProducer) {
         const localLevel = await audioLevel(
           await microphoneProducer.getStats(),
         );
         setSpeaking("self", localLevel);
-        if (localLevel >= SPEAKING_THRESHOLD)
-          localEchoGuardUntil = now + ECHO_GUARD_HANGOVER_MS;
       }
       await Promise.all(
         [...remoteAudio.values()].map(async (remote) => {
           const level = await audioLevel(await remote.consumer.getStats());
-          remoteAudioLevels.set(remote.peerId, level);
           setSpeaking(remote.peerId, level);
         }),
       );
-      applyEchoGuard(performance.now());
-    })();
-  }, 100);
+    })()
+      .catch((error) => {
+        diagnosticLog("AUDIO STATS FAILED", String(error));
+      })
+      .finally(() => {
+        sampling = false;
+      });
+  }, 150);
 }
 function stopSpeaking() {
   if (statsTimer !== undefined) window.clearInterval(statsTimer);
   statsTimer = undefined;
   speakingUntil.clear();
-  remoteAudioLevels.clear();
-  localEchoGuardUntil = 0;
-  echoGuardActive.clear();
-  for (const remote of remoteAudio.values())
-    remote.audio.volume = participantVolume(remote.peerId) / 100;
 }
 function scheduleReconnect() {
   if (intentionalDisconnect || reconnectTimer !== undefined) return;
@@ -1750,7 +1735,8 @@ async function connect(reconnecting = false, noMicrophone = false) {
         try {
           outgoingAi = await createAiAudio();
           outgoingTrack = outgoingAi.outputTrack;
-        } catch {
+        } catch (error) {
+          diagnosticLog("AI START FAILED", String(error));
           fallbackToStandard();
           outgoingStream = await captureDirect("standard");
           outgoingTrack = outgoingStream.getAudioTracks()[0];
@@ -2070,11 +2056,6 @@ function removeRemote(id: string) {
   i?.audio.pause();
   if (i) i.audio.srcObject = null;
   remoteAudio.delete(id);
-  if (
-    i &&
-    ![...remoteAudio.values()].some((remote) => remote.peerId === i.peerId)
-  )
-    remoteAudioLevels.delete(i.peerId);
   producerPeers.delete(id);
 }
 function removeScreen(id: string, ownerOverride = "") {
